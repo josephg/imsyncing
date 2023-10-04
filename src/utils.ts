@@ -61,3 +61,14 @@ export function rateLimit(min_delay: number, fn: () => void): RateLimit {
 
   return rl
 }
+
+export const resolvable = <T = void>(): {promise: Promise<T>, resolve(val: T): void, reject(val: any): void} => {
+  let resolve: any, reject: any
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return {promise, resolve, reject}
+}
+
+export const wait = (timeout: number) => new Promise((res) => setTimeout(res, timeout))

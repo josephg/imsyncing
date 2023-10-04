@@ -2,7 +2,7 @@ import * as cg from "./causal-graph.js";
 import { Action, AtLeast1, LV, Primitive, RawOperation, RawVersion } from "./types.js";
 import { AgentVersion, createAgent, min2, nextVersion, rateLimit } from "./utils.js";
 import * as sb from 'schemaboi'
-import {localSchema} from './schema.js'
+import {localDbSchema} from './schema.js'
 import * as fs from 'node:fs'
 
 export interface Db {
@@ -41,14 +41,14 @@ const saveNow = (schema: sb.Schema, db: Db) => {
 const load = (): [sb.Schema, Db] => {
   try {
     const rawData = fs.readFileSync(SAVE_FILE)
-    const [mergedSchema, db] = sb.read(localSchema, rawData)
+    const [mergedSchema, db] = sb.read(localDbSchema, rawData)
     return [mergedSchema, db as Db]
   } catch (e: any) {
     if (e.code == 'ENOENT') {
       console.warn('Warning: Existing database does not exist. Creating a new one!')
       const db = createDb()
-      saveNow(localSchema, db)
-      return [localSchema, db]
+      saveNow(localDbSchema, db)
+      return [localDbSchema, db]
     } else {
       console.error('Could not load previous database data')
       throw e

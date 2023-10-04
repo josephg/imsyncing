@@ -47,7 +47,7 @@ function decodePrim(_variant: string, val: Record<string, any> | null): any {
 }
 
 
-export const appSchema: sb.AppSchema = {
+export const appDbSchema: sb.AppSchema = {
   id: 'SimplestSync',
   root: sb.ref('Db'),
   types: {
@@ -61,6 +61,7 @@ export const appSchema: sb.AppSchema = {
     },
 
     RawVersion: {
+      exhaustive: true,
       fields: {
         id: sb.prim('id'),
         seq: LV,
@@ -129,28 +130,29 @@ export const appSchema: sb.AppSchema = {
   }
 }
 
+
 Error.stackTraceLimit = Infinity;
 
-testSimpleRoundTrip(appSchema, 'AnyType', null)
-testSimpleRoundTrip(appSchema, 'AnyType', true)
-testSimpleRoundTrip(appSchema, 'AnyType', 'hi')
-testSimpleRoundTrip(appSchema, 'AnyType', 123)
-testSimpleRoundTrip(appSchema, 'AnyType', 123.456)
-testSimpleRoundTrip(appSchema, 'AnyType', {x: 'hi'})
-testSimpleRoundTrip(appSchema, 'AnyType', [1,2,'hi'])
+testSimpleRoundTrip(appDbSchema, 'AnyType', null)
+testSimpleRoundTrip(appDbSchema, 'AnyType', true)
+testSimpleRoundTrip(appDbSchema, 'AnyType', 'hi')
+testSimpleRoundTrip(appDbSchema, 'AnyType', 123)
+testSimpleRoundTrip(appDbSchema, 'AnyType', 123.456)
+testSimpleRoundTrip(appDbSchema, 'AnyType', {x: 'hi'})
+testSimpleRoundTrip(appDbSchema, 'AnyType', [1,2,'hi'])
 
-testSimpleRoundTrip(appSchema, 'Action', {type: 'set', val: 123})
-testSimpleRoundTrip(appSchema, 'CausalGraph', cg.create())
+testSimpleRoundTrip(appDbSchema, 'Action', {type: 'set', val: 123})
+testSimpleRoundTrip(appDbSchema, 'CausalGraph', cg.create())
 {
   const cg1 = cg.create()
   cg.addRaw(cg1, ['fred', 0], 10)
   cg.addRaw(cg1, ['george', 0], 20)
   cg.addRaw(cg1, ['george', 20], 5, [['fred', 9], ['george', 19]])
 
-  testSimpleRoundTrip(appSchema, 'CausalGraph', cg1)
+  testSimpleRoundTrip(appDbSchema, 'CausalGraph', cg1)
 }
 
-testSimpleRoundTrip(appSchema, 'RawVersion', ['seph', 123])
+testSimpleRoundTrip(appDbSchema, 'RawVersion', ['seph', 123])
 
 {
 
@@ -160,9 +162,49 @@ testSimpleRoundTrip(appSchema, 'RawVersion', ['seph', 123])
     ops: new Map,
     agent: ['seph', 100],
   })
-  testSimpleRoundTrip(appSchema, 'Db', createDb())
+  testSimpleRoundTrip(appDbSchema, 'Db', createDb())
 
 }
 
-export const localSchema = sb.extendSchema(appSchema)
+
+
+const appNetSchema: sb.AppSchema = {
+  id: 'SimplestSyncNet',
+  root: sb.ref('NetMessage'),
+  types: {
+    RawVersion: appDbSchema.types.RawVersion,
+    AnyType: appDbSchema.types.AnyType,
+
+    // VersionSummary: {
+
+    // },
+
+    SeqRange: { // [startSeq, endSeq].
+      exhaustive: true,
+      fields: { start: LV, end: LV, },
+      encode(range) { return {start: range[0], end: range[1]} },
+      decode(range) { return [range.start, range.end] },
+    },
+
+    NetMessage: {
+      type: 'enum',
+      variants: {
+        Hello: {
+
+          fields: {
+            versionSummary: sb.map('string', 'SeqRange')
+          }
+        }
+      }
+    }
+  }
+}
+
+testSimpleRoundTrip(appNetSchema, 'NetMessage', {type: 'Hello', versionSummary: {seph: [0, 23]}})
+
+
+
+
+export const localDbSchema = sb.extendSchema(appDbSchema)
+export const localNetSchema = sb.extendSchema(appNetSchema)
 // export const schema = appSchema

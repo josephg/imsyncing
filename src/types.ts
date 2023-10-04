@@ -44,3 +44,27 @@ export type AtLeast1<T> = [T, ...T[]]
 // export type VersionSummary = [string, [number, number][]][]
 export interface VersionSummary {[agent: string]: [number, number][]}
 // export type RawHeads = RawVersion[]
+
+
+
+// Network messages
+export type NetMsg = {
+  type: 'Hello',
+  versionSummary: VersionSummary
+// } | {
+//   type: 'idx delta',
+//   delta: ss.RemoteStateDelta
+// } | {
+//   // Get the changes to a document since the named version.
+//   type: 'get doc',
+//   k: RawVersion,
+//   since: VersionSummary, // OPT: Could probably just send the version here most of the time.
+// } | {
+//   type: 'doc delta',
+//   k: RawVersion,
+//   delta: dt.PSerializedFancyDBv1
+// } | {
+//   // Unused!
+//   type: 'ack',
+//   v: RawVersion[]
+}
