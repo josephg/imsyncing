@@ -58,10 +58,10 @@ export const appDbSchema: sb.AppSchema = {
         branch: sb.list(LV),
         ops: sb.map(LV, 'Op', 'map'),
         agent: sb.ref('RawVersion'),
-        events: {
+        listeners: {
           type: 'ref', key: 'notused',
           skip: true,
-          defaultValue: () => new EventEmitter(),
+          defaultValue: () => new Set(),
         }
       }
     },
@@ -168,7 +168,7 @@ testSimpleRoundTrip(appDbSchema, 'RawVersion', ['seph', 123])
     branch: [],
     ops: new Map,
     agent: ['seph', 100],
-    events: new EventEmitter()
+    listeners: new Set()
   })
   testSimpleRoundTrip(appDbSchema, 'Db', createDb())
 

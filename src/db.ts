@@ -4,7 +4,6 @@ import { AgentVersion, createAgent, min2, nextVersion, rateLimit } from "./utils
 import * as sb from 'schemaboi'
 import {localDbSchema} from './schema.js'
 import * as fs from 'node:fs'
-import EventEmitter from "node:events";
 
 export interface Db {
   cg: cg.CausalGraph,
@@ -21,7 +20,8 @@ export interface Db {
 
   agent: AgentVersion,
 
-  events: EventEmitter,
+  // events: EventEmitter,
+  listeners: Set<(from: 'local' | 'remote') => void>,
 }
 
 const createDb = (): Db => ({
@@ -29,30 +29,30 @@ const createDb = (): Db => ({
   branch: [],
   ops: new Map,
   agent: createAgent(),
-  events: new EventEmitter(),
+  listeners: new Set(),
 })
 
-const SAVE_FILE = process.env['DB_FILE'] || 'db.scb'
+// const SAVE_FILE = process.env['DB_FILE'] || 'db.scb'
 
-const saveNow = (schema: sb.Schema, db: Db) => {
+const saveNow = (filename: string, schema: sb.Schema, db: Db) => {
   const data = sb.write(schema, db)
   console.log(`saving ${data.byteLength} bytes`)
 
   // console.log('data', data)
-  fs.writeFileSync(SAVE_FILE, data)
-  console.log('Db saved to', SAVE_FILE)
+  fs.writeFileSync(filename, data)
+  console.log('Db saved to', filename)
 }
 
-const load = (): [sb.Schema, Db] => {
+const load = (filename: string): [sb.Schema, Db] => {
   try {
-    const rawData = fs.readFileSync(SAVE_FILE)
+    const rawData = fs.readFileSync(filename)
     const [mergedSchema, db] = sb.read(localDbSchema, rawData)
     return [mergedSchema, db as Db]
   } catch (e: any) {
     if (e.code == 'ENOENT') {
       console.warn('Warning: Existing database does not exist. Creating a new one!')
       const db = createDb()
-      saveNow(localDbSchema, db)
+      saveNow(filename, localDbSchema, db)
       return [localDbSchema, db]
     } else {
       console.error('Could not load previous database data')
@@ -61,11 +61,31 @@ const load = (): [sb.Schema, Db] => {
   }
 }
 
-// Global singleton database for this process.
-export const [storageSchema, db] = load()
+export function emitChangeEvent(db: Db, from: 'local' | 'remote') {
+  for (const listener of db.listeners) {
+    listener(from)
+  }
+}
 
-const save = rateLimit(1000, () => saveNow(storageSchema, db))
-db.events.on('change', save)
+export function createOrLoadDb(filename: string = process.env['DB_FILE'] ?? 'db.scb'): Db {
+  const [schema, db] = load(filename)
+
+  const save = rateLimit(1000, () => saveNow(filename, schema, db))
+  db.listeners.add(save)
+
+  process.on('exit', () => {
+    // console.log('exit')
+    save.doItNow()
+  })
+
+  console.log('agent', db.agent)
+
+  return db
+}
+
+// Global singleton database for this process.
+// export const [storageSchema, db] = load()
+
 
 process.on('SIGTERM', () => {
   // save()
@@ -85,12 +105,6 @@ process.on('unhandledRejection', e => {
   console.error(e)
   process.exit(1)
 })
-
-process.on('exit', () => {
-  // console.log('exit')
-  save.doItNow()
-})
-
 
 
 export const getAllVals = (db: Db): Primitive[] => {
@@ -115,7 +129,7 @@ export const set = (db: Db, val: Primitive): LV => {
   let lv = cg.assignLocal(db.cg, agentId, seq, db.branch)
   db.ops.set(lv, {type: 'set', val})
   db.branch = [lv]
-  db.events.emit('change', 'local')
+  emitChangeEvent(db, 'local')
   return lv
 }
 
@@ -146,6 +160,7 @@ export const getOpsInDiff = (db: Db, diff: cg.PartialSerializedCGV2): OpSet => {
   return opsToSend
 }
 
+/** NOTE: This method does not notify listeners! */
 export const mergeDelta = (db: Db, cgDiff: cg.PartialSerializedCGV2, opset: OpSet) => {
   let diffSeq = 0
 
@@ -168,5 +183,7 @@ export const mergeDelta = (db: Db, cgDiff: cg.PartialSerializedCGV2, opset: OpSe
     diffSeq += len
   }
 
-  db.events.emit('change', 'remote')
+  // setImmediate(() => {
+  //   db.events.emit('change', 'remote')
+  // })
 }

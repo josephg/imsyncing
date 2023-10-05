@@ -31,7 +31,7 @@ export default function startRepl(db: dbLib.Db) {
     process.exit(0)
   })
 
-  db.events.on('change', (type: 'local' | 'remote') => {
+  db.listeners.add((type: 'local' | 'remote') => {
     if (type === 'remote') {
       console.log('got remtoe change to db')
       console.log('new val:', dbLib.getVal(db))
