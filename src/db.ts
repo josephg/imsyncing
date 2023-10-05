@@ -93,6 +93,11 @@ process.on('exit', () => {
 
 
 
+export const getAllVals = (db: Db): Primitive[] => {
+  // If the branch is empty, we'll return an empty list.
+  return db.branch.map(lv => db.ops.get(lv)!.val)
+}
+
 
 export const getVal = (db: Db): Primitive => {
   // Empty database / branch.

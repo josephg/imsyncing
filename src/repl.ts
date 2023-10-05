@@ -20,8 +20,11 @@ export default function startRepl(db: dbLib.Db) {
     dbLib.set(db, val)
   }
 
-  r.context.get = () => {
+  r.context.get1 = () => {
     return dbLib.getVal(db)
+  }
+  r.context.get = () => {
+    return dbLib.getAllVals(db)
   }
 
   r.once('exit', () => {

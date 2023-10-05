@@ -1,4 +1,4 @@
-import * as cg from "./causal-graph.js";
+import * as causalGraph from "./causal-graph.js";
 import { Op, AtLeast1, LV, NetMsg, Primitive, RawOperation, RawVersion, VersionSummary } from "./types.js";
 import { AgentVersion, createAgent, min2, nextVersion, resolvable, wait } from "./utils.js";
 import * as sb from 'schemaboi'
@@ -26,15 +26,15 @@ const console = new Console({
 
 const mergeFrom = (into: db.Db, from: db.Db) => {
   // let fromHeads = cg.lvToRawList(from.cg, from.cg.heads)
-  let vs = cg.summarizeVersion(into.cg)
+  let vs = causalGraph.summarizeVersion(into.cg)
 
-  const [common, remainder] = cg.intersectWithSummary(from.cg, vs)
+  const [common, remainder] = causalGraph.intersectWithSummary(from.cg, vs)
   console.log('common', common, 'rem', remainder)
 
   // The remainder gives us a bunch of ranges of versions to send, and common
   // is the most recent common LV.
 
-  const cgDiff = cg.serializeFromVersion(from.cg, common)
+  const cgDiff = causalGraph.serializeFromVersion(from.cg, common)
   console.log('sd', cgDiff)
 
 
@@ -51,10 +51,31 @@ const mergeFrom = (into: db.Db, from: db.Db) => {
 console.log('agent', db.db.agent)
 
 
+const dbListeners = new Set<() => void>()
+db.db.events.on('change', (from: 'remote' | 'local') => {
+  // console.log('change', from, dbListeners.size)
+  for (const l of dbListeners) {
+    l()
+  }
+})
+
 const runProtocol = (sock: net.Socket): Promise<void> => {
   type ProtocolState = {state: 'waitingForVersion'} | {
     state: 'established',
+    /**
+     * The version that we expect the remote peer to have.
+     * This includes sent versions that haven't been acknowledged yet.
+     *
+     * It is always <= our current version.
+     *
+     * The remoteVersion on all connected peers will generally move in lockstep.
+     * We still have this value here because if we're connected to 2 peers, we
+     * update remoteVersion when we get deltas from one peer and that way we know
+     * not to reflect the changes back to that peer.
+     */
     remoteVersion: LV[],
+
+    /** Versions the remote peer has that we don't have yet. */
     unknownVersions: VersionSummary | null
   }
 
@@ -71,8 +92,46 @@ const runProtocol = (sock: net.Socket): Promise<void> => {
 
   const finishPromise = resolvable()
 
+
+  const sendDelta = (sinceVersion: LV[]) => {
+    console.log('sending delta to', sock.remoteAddress, sock.remotePort, 'since', sinceVersion)
+    const cgDiff = causalGraph.serializeFromVersion(db.db.cg, sinceVersion)
+    const opsToSend = db.getOpsInDiff(db.db, cgDiff)
+    write({
+      type: 'Delta',
+      cg: cgDiff,
+      ops: opsToSend
+    })
+  }
+
+  const onVersionChanged = () => {
+    console.log('onVersionChanged', state)
+    if (state.state !== 'established') throw Error('Unexpected connection state')
+    const cg = db.db.cg
+
+    if (state.unknownVersions != null) {
+      // The db might now include part of the remainder. Doing this works
+      // around a bug where connecting to 2 computers will result in
+      // re-sending known changes back to them.
+      // console.log('unknown', state.unknownVersions)
+      ;[state.remoteVersion, state.unknownVersions] = causalGraph.intersectWithSummary(
+        cg, state.unknownVersions, state.remoteVersion
+      )
+      // console.log('->known', state.unknownVersions)
+    }
+
+    // console.log('cg heads', cg.heads)
+    if (!causalGraph.lvEq(state.remoteVersion, cg.heads)) {
+      sendDelta(state.remoteVersion)
+      // The version will always (& only) advance forward.
+      state.remoteVersion = cg.heads.slice()
+    }
+  }
+
+
   const {close, write} = handle<NetMsg>(sock, localNetSchema, (msg, sock) => {
     console.log('got net msg', msg)
+    const cg = db.db.cg
 
     switch (msg.type) {
       case 'Hello': {
@@ -81,38 +140,49 @@ const runProtocol = (sock: net.Socket): Promise<void> => {
         // When we get the known versions, we always send a delta so the remote
         // knows they're up to date (even if they were already anyway).
         const summary = msg.versionSummary
-        const myCg = db.db.cg
-        const [sv, remainder] = cg.intersectWithSummary(myCg, summary)
-        console.log('known idx version', sv)
-        if (!cg.lvEq(sv, myCg.heads)) {
+        const [sinceVersion, remainder] = causalGraph.intersectWithSummary(cg, summary)
+        // console.log('known idx version', sinceVersion)
+        if (!causalGraph.lvEq(sinceVersion, cg.heads)) {
           // We could always send the delta here to let the remote peer know they're
           // up to date, but they can figure that out by looking at the known idx version
           // we send on first connect.
 
-          console.log('send delta', sv)
+          console.log('send delta', sinceVersion)
           // sendDelta(sv)
 
-          const cgDiff = cg.serializeFromVersion(db.db.cg, sv)
-          const opsToSend = db.getOpsInDiff(db.db, cgDiff)
-          write({
-            type: 'Delta',
-            cg: cgDiff,
-            ops: opsToSend
-          })
+          sendDelta(sinceVersion)
         }
 
         state = {
           state: 'established',
-          remoteVersion: sv,
+          remoteVersion: cg.heads.slice(),
+          // remoteVersion: sinceVersion,
           unknownVersions: remainder
         }
 
-        // dbListeners.add(onVersionChanged) // Only matters the first time.
+        dbListeners.add(onVersionChanged) // Only matters the first time.
         break
       }
+
       case 'Delta': {
+        if (state.state !== 'established') throw Error('Invalid state')
+
         console.log('got delta', msg.cg, msg.ops)
+
+        // Importantly, the notify event will fire after other syncronous stuff we do here.
         db.mergeDelta(db.db, msg.cg, msg.ops)
+
+        state.remoteVersion = causalGraph.advanceVersionFromSerialized(
+          cg, msg.cg, state.remoteVersion
+        )
+        // TODO: Ideally, this shouldn't be necessary! But it is because the remoteVersion
+        // also gets updated as a result of versions *we* send.
+        state.remoteVersion = causalGraph.findDominators(cg, state.remoteVersion)
+
+        // Presumably the remote peer has just sent us all the data it has that we were
+        // missing. I could call intersectWithSummary2 here, but this should be
+        // sufficient.
+        state.unknownVersions = null
         break
       }
     }
@@ -120,14 +190,14 @@ const runProtocol = (sock: net.Socket): Promise<void> => {
 
   finished(sock, (err) => {
     console.log('Socket closed', sock.remoteAddress, sock.remotePort)
-    // dbListeners.delete(onVersionChanged)
+    dbListeners.delete(onVersionChanged)
     close()
 
     if (err) finishPromise.reject(err)
     else finishPromise.resolve()
   })
 
-  write({type: 'Hello', versionSummary: cg.summarizeVersion(db.db.cg)})
+  write({type: 'Hello', versionSummary: causalGraph.summarizeVersion(db.db.cg)})
 
   return finishPromise.promise
 }
