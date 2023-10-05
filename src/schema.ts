@@ -1,7 +1,9 @@
 import * as sb from 'schemaboi'
 import {testSimpleRoundTrip} from 'schemaboi/testhelpers.js'
-import { RawVersion } from "./types.js";
+import { NetMsg, RawVersion } from "./types.js";
 import * as cg from './causal-graph.js';
+import EventEmitter from 'events';
+import { Db } from './db.js';
 
 const LV = sb.prim('u64')
 
@@ -46,7 +48,6 @@ function decodePrim(_variant: string, val: Record<string, any> | null): any {
   }
 }
 
-
 export const appDbSchema: sb.AppSchema = {
   id: 'SimplestSync',
   root: sb.ref('Db'),
@@ -55,13 +56,18 @@ export const appDbSchema: sb.AppSchema = {
       fields: {
         cg: sb.ref('CausalGraph'),
         branch: sb.list(LV),
-        ops: sb.map(LV, 'Action', 'map'),
+        ops: sb.map(LV, 'Op', 'map'),
         agent: sb.ref('RawVersion'),
+        events: {
+          type: 'ref', key: 'notused',
+          skip: true,
+          defaultValue: () => new EventEmitter(),
+        }
       }
     },
 
     RawVersion: {
-      exhaustive: true,
+      // exhaustive: true,
       fields: {
         id: sb.prim('id'),
         seq: LV,
@@ -72,6 +78,16 @@ export const appDbSchema: sb.AppSchema = {
       decode(vv: any): RawVersion { // {id: string, seq: number}
         return [vv.id, vv.seq]
       },
+    },
+
+    Op: {
+      type: 'enum',
+      exhaustive: false,
+      variants: {
+        set: {
+          fields: { val: sb.ref('AnyType') }
+        }
+      }
     },
 
     AnyType: {
@@ -91,15 +107,6 @@ export const appDbSchema: sb.AppSchema = {
       }
     },
 
-    Action: {
-      type: 'enum',
-      exhaustive: false,
-      variants: {
-        set: {
-          fields: { val: sb.ref('AnyType') }
-        }
-      }
-    },
 
     CGEntry: {
       fields: {
@@ -141,7 +148,7 @@ testSimpleRoundTrip(appDbSchema, 'AnyType', 123.456)
 testSimpleRoundTrip(appDbSchema, 'AnyType', {x: 'hi'})
 testSimpleRoundTrip(appDbSchema, 'AnyType', [1,2,'hi'])
 
-testSimpleRoundTrip(appDbSchema, 'Action', {type: 'set', val: 123})
+testSimpleRoundTrip(appDbSchema, 'Op', {type: 'set', val: 123})
 testSimpleRoundTrip(appDbSchema, 'CausalGraph', cg.create())
 {
   const cg1 = cg.create()
@@ -156,11 +163,12 @@ testSimpleRoundTrip(appDbSchema, 'RawVersion', ['seph', 123])
 
 {
 
-  const createDb = () => ({
+  const createDb = (): Db => ({
     cg: cg.create(),
     branch: [],
     ops: new Map,
     agent: ['seph', 100],
+    events: new EventEmitter()
   })
   testSimpleRoundTrip(appDbSchema, 'Db', createDb())
 
@@ -173,6 +181,7 @@ const appNetSchema: sb.AppSchema = {
   root: sb.ref('NetMessage'),
   types: {
     RawVersion: appDbSchema.types.RawVersion,
+    Op: appDbSchema.types.Op,
     AnyType: appDbSchema.types.AnyType,
 
     // VersionSummary: {
@@ -186,13 +195,28 @@ const appNetSchema: sb.AppSchema = {
       decode(range) { return [range.start, range.end] },
     },
 
+    PartialSerializedCGEntry: {
+      fields: {
+        agent: sb.prim('id'),
+        seq: LV,
+        len: LV,
+        parents: sb.list('RawVersion')
+      }
+    },
+
     NetMessage: {
       type: 'enum',
       variants: {
         Hello: {
-
           fields: {
-            versionSummary: sb.map('string', 'SeqRange')
+            versionSummary: sb.map('string', sb.list('SeqRange'))
+          }
+        },
+
+        Delta: {
+          fields: {
+            cg: sb.list('PartialSerializedCGEntry'),
+            ops: sb.map(LV, 'Op', 'map'),
           }
         }
       }
@@ -200,8 +224,19 @@ const appNetSchema: sb.AppSchema = {
   }
 }
 
-testSimpleRoundTrip(appNetSchema, 'NetMessage', {type: 'Hello', versionSummary: {seph: [0, 23]}})
+{
+  let helloMsg: NetMsg = {type: 'Hello', versionSummary: {seph: [[0, 23]]}}
+  testSimpleRoundTrip(appNetSchema, 'NetMessage', helloMsg)
 
+  let deltaMsg: NetMsg = {
+    type: 'Delta',
+    cg: [{agent: 'fred', seq: 2, len: 2, parents: []}],
+    ops: new Map([
+      [1, {type: 'set', val: 'hello'}]
+    ])
+  }
+  testSimpleRoundTrip(appNetSchema, 'NetMessage', deltaMsg)
+}
 
 
 

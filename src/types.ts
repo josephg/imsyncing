@@ -1,5 +1,7 @@
 // import { type } from "os"
 
+import { PartialSerializedCGV2 } from "./causal-graph.js"
+
 export type RawVersion = [agent: string, seq: number]
 
 export const ROOT: RawVersion = ['ROOT', 0]
@@ -22,7 +24,7 @@ export type Primitive = null
 // export type CreateValue = {type: 'primitive', val: Primitive}
 //   | {type: 'crdt', crdtKind: 'map' | 'set' | 'register'}
 
-export type Action =
+export type Op =
   { type: 'set', val: Primitive }
 // export type Action =
 // { type: 'map', key: string, localParents: RawVersion[], val: CreateValue }
@@ -35,7 +37,7 @@ export interface RawOperation {
   parents: RawVersion[],
   // globalParents: RawVersion[],
   // crdtId: RawVersion,
-  action: Action,
+  op: Op,
 }
 
 /** Helper type for a list with at least 1 entry in it. */
@@ -47,10 +49,27 @@ export interface VersionSummary {[agent: string]: [number, number][]}
 
 
 
+// These are sequence numbers in the order of the CG delta being sent.
+// 0 = first sent CG change, and so on.
+// These could be compacted better using RLE. They'll often just be a filled set of ordinals (1,2,3,4,...).
+export type OpSet = Map<number, Op>
+
+// export type OpSet = {
+//   // These are sequence numbers in the order of the CG delta being sent.
+//   // 0 = first sent CG change, and so on.
+//   // These could be compacted better using RLE. They'll often just be ordinals (1,2,3,4,...).
+//   diffSeq: number,
+//   op: Op
+// }[]
+
 // Network messages
 export type NetMsg = {
   type: 'Hello',
   versionSummary: VersionSummary
+} | {
+  type: 'Delta',
+  cg: PartialSerializedCGV2
+  ops: OpSet
 // } | {
 //   type: 'idx delta',
 //   delta: ss.RemoteStateDelta

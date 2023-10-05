@@ -1,5 +1,5 @@
 import * as cg from "./causal-graph.js";
-import { Action, AtLeast1, LV, NetMsg, Primitive, RawOperation, RawVersion } from "./types.js";
+import { Op, AtLeast1, LV, NetMsg, Primitive, RawOperation, RawVersion, VersionSummary } from "./types.js";
 import { AgentVersion, createAgent, min2, nextVersion, resolvable, wait } from "./utils.js";
 import * as sb from 'schemaboi'
 import * as db from './db.js'
@@ -9,6 +9,9 @@ import {Console} from 'node:console'
 import { localNetSchema } from "./schema.js";
 import handle from "./message-stream.js";
 import { finished } from "node:stream";
+import startRepl from './repl.js'
+
+
 const console = new Console({
   stdout: process.stdout,
   stderr: process.stderr,
@@ -42,26 +45,21 @@ const mergeFrom = (into: db.Db, from: db.Db) => {
   let opIdx = 0
   // Ok now merge everything. Merge the CG changes...
   // let [start, end] = cg.mergePartialVersions(into.cg, cgDiff)
-  for (const [agent, seq, len, parents] of cgDiff) {
-    let entry = cg.addRaw(into.cg, [agent, seq], len, parents)
-    if (entry == null) {
-      // We've already recieved these versions.
-      opIdx += len
-    } else {
-      for (let i = 0; i < len; i++) {
-        let op = opsToSend[opIdx++]
-        into.ops.set(entry.version + i, op)
-      }
-      // And advance into's branch by the new entry.
-      into.branch = cg.advanceFrontier(into.branch, entry.vEnd - 1, entry.parents)
-    }
-  }
+  db.mergeDelta(into, cgDiff, opsToSend)
 }
 
 console.log('agent', db.db.agent)
 
 
 const runProtocol = (sock: net.Socket): Promise<void> => {
+  type ProtocolState = {state: 'waitingForVersion'} | {
+    state: 'established',
+    remoteVersion: LV[],
+    unknownVersions: VersionSummary | null
+  }
+
+  let state: ProtocolState = {state: 'waitingForVersion'}
+
   // type ProtocolState = {state: 'waitingForVersion'}
   //   | {
   //     state: 'established',
@@ -75,6 +73,49 @@ const runProtocol = (sock: net.Socket): Promise<void> => {
 
   const {close, write} = handle<NetMsg>(sock, localNetSchema, (msg, sock) => {
     console.log('got net msg', msg)
+
+    switch (msg.type) {
+      case 'Hello': {
+        if (state.state !== 'waitingForVersion') throw Error('Unexpected connection state')
+
+        // When we get the known versions, we always send a delta so the remote
+        // knows they're up to date (even if they were already anyway).
+        const summary = msg.versionSummary
+        const myCg = db.db.cg
+        const [sv, remainder] = cg.intersectWithSummary(myCg, summary)
+        console.log('known idx version', sv)
+        if (!cg.lvEq(sv, myCg.heads)) {
+          // We could always send the delta here to let the remote peer know they're
+          // up to date, but they can figure that out by looking at the known idx version
+          // we send on first connect.
+
+          console.log('send delta', sv)
+          // sendDelta(sv)
+
+          const cgDiff = cg.serializeFromVersion(db.db.cg, sv)
+          const opsToSend = db.getOpsInDiff(db.db, cgDiff)
+          write({
+            type: 'Delta',
+            cg: cgDiff,
+            ops: opsToSend
+          })
+        }
+
+        state = {
+          state: 'established',
+          remoteVersion: sv,
+          unknownVersions: remainder
+        }
+
+        // dbListeners.add(onVersionChanged) // Only matters the first time.
+        break
+      }
+      case 'Delta': {
+        console.log('got delta', msg.cg, msg.ops)
+        db.mergeDelta(db.db, msg.cg, msg.ops)
+        break
+      }
+    }
   })
 
   finished(sock, (err) => {
@@ -173,6 +214,7 @@ for (let i = 2; i < process.argv.length; i++) {
   // console.log(process.argv[i])
 }
 
+startRepl(db.db)
 
 // const server = net.createServer(async sock => {
 //   console.log('got server socket connection', sock.remoteAddress, sock.remotePort)

@@ -788,7 +788,7 @@ export const compareVersions = (cg: CausalGraph, a: LV, b: LV): number => {
 
 // This is identical to CGEntry above, but reproduced to pin it.
 type SerializedCGEntryV2 = {
-  version: LV,
+  version: LV, // TODO: Remove version here - this is redundant.
   vEnd: LV,
 
   agent: string,
@@ -829,21 +829,28 @@ export function fromSerialized(data: SerializedCausalGraphV1): CausalGraph {
 }
 
 
-type PartialSerializedCGEntryV1 = [
+// type PartialSerializedCGEntryV1 = [
+//   agent: string,
+//   seq: number,
+//   len: number,
+
+//   parents: RawVersion[]
+// ]
+type PartialSerializedCGEntryV2 = {
   agent: string,
   seq: number,
   len: number,
 
   parents: RawVersion[]
-]
+}
 
-export type PartialSerializedCGV1 = PartialSerializedCGEntryV1[]
+export type PartialSerializedCGV2 = PartialSerializedCGEntryV2[]
 
 //! The entries returned from this function are always in causal order.
-export function serializeFromVersion(cg: CausalGraph, v: LV[]): PartialSerializedCGV1 {
+export function serializeFromVersion(cg: CausalGraph, v: LV[]): PartialSerializedCGV2 {
   const ranges = diff(cg, v, cg.heads).bOnly
 
-  const entries: PartialSerializedCGEntryV1[] = []
+  const entries: PartialSerializedCGEntryV2[] = []
   for (const r of ranges) {
     let [start, end] = r
     while (start != end) {
@@ -855,12 +862,12 @@ export function serializeFromVersion(cg: CausalGraph, v: LV[]): PartialSerialize
         ? lvToRawList(cg, e.parents)
         : [[e.agent, e.seq + offset - 1]]
 
-      entries.push([
-        e.agent,
-        e.seq + offset,
+      entries.push({
+        agent: e.agent,
+        seq: e.seq + offset,
         len,
         parents
-      ])
+      })
 
       start += len
     }
@@ -869,21 +876,21 @@ export function serializeFromVersion(cg: CausalGraph, v: LV[]): PartialSerialize
   return entries
 }
 
-export function mergePartialVersions(cg: CausalGraph, data: PartialSerializedCGV1): LVRange {
+export function mergePartialVersions(cg: CausalGraph, data: PartialSerializedCGV2): LVRange {
   const start = nextLV(cg)
 
-  for (const [agent, seq, len, parents] of data) {
+  for (const {agent, seq, len, parents} of data) {
     addRaw(cg, [agent, seq], len, parents)
   }
 
   return [start, nextLV(cg)]
 }
 
-export function advanceVersionFromSerialized(cg: CausalGraph, data: PartialSerializedCGV1, version: LV[]): LV[] {
-  for (const [agent, seq, len, rawParents] of data) {
-    const parents = rawToLVList(cg, rawParents)
+export function advanceVersionFromSerialized(cg: CausalGraph, data: PartialSerializedCGV2, version: LV[]): LV[] {
+  for (const {agent, seq, len, parents} of data) {
+    const parentLVs = rawToLVList(cg, parents)
     const vLast = rawToLV(cg, agent, seq + len - 1)
-    version = advanceFrontier(version, vLast, parents)
+    version = advanceFrontier(version, vLast, parentLVs)
   }
 
   // NOTE: Callers might need to call findDominators on the result.
