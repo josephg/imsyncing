@@ -1,6 +1,7 @@
 // import { type } from "os"
 
-import { PartialSerializedCGV2 } from "./causal-graph.js"
+// import { PartialSerializedCGV2 } from "./causal-graph.js"
+import {SSDelta} from './stateset.js'
 
 export type RawVersion = [agent: string, seq: number]
 
@@ -54,6 +55,22 @@ export interface VersionSummary {[agent: string]: [number, number][]}
 // These could be compacted better using RLE. They'll often just be a filled set of ordinals (1,2,3,4,...).
 export type OpSet = Map<number, Op>
 
+
+
+export type RegisterValue = {type: 'primitive', val: Primitive}
+  | {type: 'crdt', id: LV}
+
+export type MVRegister = AtLeast1<[LV, RegisterValue]>
+
+
+export type CRDTMapInfo = { type: 'map', registers: {[k: string]: MVRegister} }
+export type CRDTSetInfo = { type: 'set', values: Map<LV, RegisterValue> }
+export type CRDTRegisterInfo = { type: 'register', value: MVRegister }
+
+// export type CRDTInfo = CRDTMapInfo | CRDTSetInfo | CRDTRegisterInfo
+export type CRDTInfo = CRDTRegisterInfo
+
+
 // export type OpSet = {
 //   // These are sequence numbers in the order of the CG delta being sent.
 //   // 0 = first sent CG change, and so on.
@@ -62,14 +79,20 @@ export type OpSet = Map<number, Op>
 //   op: Op
 // }[]
 
+export type SyncConfig = 'all' | 'none' // .. or only one value, or one type, ...
+
 // Network messages
 export type NetMsg = {
   type: 'Hello',
-  versionSummary: VersionSummary
+  inboxVersion: VersionSummary,
+  sync: SyncConfig,
 } | {
-  type: 'Delta',
-  cg: PartialSerializedCGV2
-  ops: OpSet
+  type: 'InboxDelta',
+  delta: SSDelta,
+// } | {
+  // type: 'Delta',
+  // cg: PartialSerializedCGV2
+  // ops: OpSet
 // } | {
 //   type: 'idx delta',
 //   delta: ss.RemoteStateDelta

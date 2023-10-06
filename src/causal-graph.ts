@@ -846,13 +846,13 @@ type PartialSerializedCGEntryV2 = {
 
 export type PartialSerializedCGV2 = PartialSerializedCGEntryV2[]
 
-//! The entries returned from this function are always in causal order.
-export function serializeFromVersion(cg: CausalGraph, v: LV[]): PartialSerializedCGV2 {
-  const ranges = diff(cg, v, cg.heads).bOnly
-
+/**
+ * The entries returned from this function are in the order of versions
+ * specified in ranges.
+ */
+export function serializeDiff(cg: CausalGraph, ranges: LVRange[]): PartialSerializedCGV2 {
   const entries: PartialSerializedCGEntryV2[] = []
-  for (const r of ranges) {
-    let [start, end] = r
+  for (let [start, end] of ranges) {
     while (start != end) {
       const [e, offset] = findEntryContaining(cg, start)
 
@@ -876,6 +876,12 @@ export function serializeFromVersion(cg: CausalGraph, v: LV[]): PartialSerialize
   return entries
 }
 
+//! The entries returned from this function are always in causal order.
+export function serializeFromVersion(cg: CausalGraph, v: LV[]): PartialSerializedCGV2 {
+  const ranges = diff(cg, v, cg.heads).bOnly
+  return serializeDiff(cg, ranges)
+}
+
 export function mergePartialVersions(cg: CausalGraph, data: PartialSerializedCGV2): LVRange {
   const start = nextLV(cg)
 
@@ -884,6 +890,16 @@ export function mergePartialVersions(cg: CausalGraph, data: PartialSerializedCGV
   }
 
   return [start, nextLV(cg)]
+}
+export function *mergePartialVersions2(cg: CausalGraph, data: PartialSerializedCGV2) {
+  // const start = nextLV(cg)
+
+  for (const {agent, seq, len, parents} of data) {
+    const newEntry = addRaw(cg, [agent, seq], len, parents)
+    if (newEntry != null) yield newEntry
+  }
+
+  // return [start, nextLV(cg)]
 }
 
 export function advanceVersionFromSerialized(cg: CausalGraph, data: PartialSerializedCGV2, version: LV[]): LV[] {

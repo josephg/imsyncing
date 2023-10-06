@@ -1,41 +1,62 @@
 import repl from 'node:repl'
 import * as dbLib from './db.js'
-import * as cg from './causal-graph.js'
-import { Primitive } from './types.js'
+import * as causalGraph from './causal-graph.js'
+import * as ss from './stateset.js'
+import { LV, Primitive, RawVersion } from './types.js'
+import { nextVersion } from './utils.js'
 
 // ***** REPL
 export default function startRepl(db: dbLib.Db) {
   const r = repl.start({
     prompt: '> ',
     useColors: true,
-    terminal: true,
+    // terminal: true,
     // completer: true,
-
+    ignoreUndefined: true,
   })
-
-  r.context.db = db
-  r.context.cg = cg
-
-  r.context.set = (val: Primitive) => {
-    dbLib.set(db, val)
-  }
-
-  r.context.get1 = () => {
-    return dbLib.getVal(db)
-  }
-  r.context.get = () => {
-    return dbLib.getAllVals(db)
-  }
-
-  r.once('exit', () => {
-    process.exit(0)
-  })
-
-  db.listeners.add((type: 'local' | 'remote') => {
-    if (type === 'remote') {
-      console.log('got remtoe change to db')
-      console.log('new val:', dbLib.getVal(db))
+  r.setupHistory('.history', err => {
+    if (err) throw err
+  
+    r.context.db = db
+    r.context.cg = causalGraph
+  
+    r.context.insert = (val: Primitive) => {
+      // db.inbox
+      const key = ss.localInsert(db.inbox, nextVersion(db.agent), val)
+      dbLib.emitChangeEvent(db, 'local')
+      return key
     }
+  
+    // r.context.set = (val: Primitive) => {
+    //   dbLib.set(db, val)
+    // }
+  
+    // r.context.get1 = () => {
+    //   return dbLib.getVal(db)
+    // }
+    r.context.get = (key: LV | RawVersion) => {
+      if (Array.isArray(key)) {
+        key = causalGraph.rawToLV2(db.inbox.cg, key)
+      }
+      // return dbLib.getAllVals(db)
+  
+      return ss.get(db.inbox, key)
+    }
+  
+    r.context.getAll = () => {
+      return db.inbox.values
+    }
+  
+    r.once('exit', () => {
+      process.exit(0)
+    })
+  
+    db.listeners.add((type: 'local' | 'remote') => {
+      if (type === 'remote') {
+        console.log('got remote change to db')
+        // console.log('new val:', dbLib.getVal(db))
+      }
+    })
   })
 }
 

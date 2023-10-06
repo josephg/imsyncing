@@ -1,9 +1,9 @@
 import * as sb from 'schemaboi'
-import {testSimpleRoundTrip} from 'schemaboi/testhelpers.js'
-import { NetMsg, RawVersion } from "./types.js";
+import { LV, NetMsg, Primitive, RawVersion } from "./types.js";
 import * as cg from './causal-graph.js';
 import EventEmitter from 'events';
 import { Db } from './db.js';
+import * as ss from './stateset.js';
 
 const LV = sb.prim('u64')
 
@@ -54,16 +54,27 @@ export const appDbSchema: sb.AppSchema = {
   types: {
     Db: {
       fields: {
-        cg: sb.ref('CausalGraph'),
-        branch: sb.list(LV),
-        ops: sb.map(LV, 'Op', 'map'),
+        // cg: sb.ref('CausalGraph'),
+        // branch: sb.list(LV),
+        // ops: sb.map(LV, 'Op', 'map'),
+
+        inbox: sb.ref('StateSet'),
+        entries: sb.map(LV, LV, 'map'), // Not yet used.
         agent: sb.ref('RawVersion'),
+        syncConfig: sb.ref('SyncConfig'),
         listeners: {
           type: 'ref', key: 'notused',
           skip: true,
           defaultValue: () => new Set(),
         }
       }
+    },
+
+    SyncConfig: {
+      type: 'enum',
+      variants: ['all', 'none'],
+      decode(variant, data) { return variant },
+      encode(variant) { return {type: variant} }
     },
 
     RawVersion: {
@@ -120,6 +131,29 @@ export const appDbSchema: sb.AppSchema = {
       }
     },
 
+    SSPair: {
+      fields: {
+        lv: LV,
+        val: sb.ref('AnyType'),
+      },
+      encode(pair: [LV, Primitive]) {
+        return { lv: pair[0], val: pair[1] }
+      },
+      decode(pair: any): RawVersion { // {id: string, seq: number}
+        return [pair.lv, pair.val]
+      },
+    },
+
+    StateSet: {
+      fields: {
+        values: sb.map(LV, sb.list(sb.ref('SSPair')), 'map'),
+        cg: sb.ref('CausalGraph')
+      },
+      decode({values, cg}: any): ss.StateSet {
+        return ss.hydrate(values, cg)
+      }
+    },
+
     CausalGraph: {
       fields: {
         heads: sb.list('u64'), // Could just recompute this on load?
@@ -138,51 +172,14 @@ export const appDbSchema: sb.AppSchema = {
 }
 
 
-Error.stackTraceLimit = Infinity;
-
-testSimpleRoundTrip(appDbSchema, 'AnyType', null)
-testSimpleRoundTrip(appDbSchema, 'AnyType', true)
-testSimpleRoundTrip(appDbSchema, 'AnyType', 'hi')
-testSimpleRoundTrip(appDbSchema, 'AnyType', 123)
-testSimpleRoundTrip(appDbSchema, 'AnyType', 123.456)
-testSimpleRoundTrip(appDbSchema, 'AnyType', {x: 'hi'})
-testSimpleRoundTrip(appDbSchema, 'AnyType', [1,2,'hi'])
-
-testSimpleRoundTrip(appDbSchema, 'Op', {type: 'set', val: 123})
-testSimpleRoundTrip(appDbSchema, 'CausalGraph', cg.create())
-{
-  const cg1 = cg.create()
-  cg.addRaw(cg1, ['fred', 0], 10)
-  cg.addRaw(cg1, ['george', 0], 20)
-  cg.addRaw(cg1, ['george', 20], 5, [['fred', 9], ['george', 19]])
-
-  testSimpleRoundTrip(appDbSchema, 'CausalGraph', cg1)
-}
-
-testSimpleRoundTrip(appDbSchema, 'RawVersion', ['seph', 123])
-
-{
-
-  const createDb = (): Db => ({
-    cg: cg.create(),
-    branch: [],
-    ops: new Map,
-    agent: ['seph', 100],
-    listeners: new Set()
-  })
-  testSimpleRoundTrip(appDbSchema, 'Db', createDb())
-
-}
-
-
-
-const appNetSchema: sb.AppSchema = {
+export const appNetSchema: sb.AppSchema = {
   id: 'SimplestSyncNet',
   root: sb.ref('NetMessage'),
   types: {
     RawVersion: appDbSchema.types.RawVersion,
     Op: appDbSchema.types.Op,
     AnyType: appDbSchema.types.AnyType,
+    SyncConfig: appDbSchema.types.SyncConfig,
 
     // VersionSummary: {
 
@@ -204,41 +201,42 @@ const appNetSchema: sb.AppSchema = {
       }
     },
 
+    SSDeltaOp: {
+      fields: {
+        vOffset: LV,
+        key: sb.ref('RawVersion'),
+        val: sb.ref('AnyType'),
+      }
+    },
+
+    SSDelta: {
+      fields: {
+        cg: sb.list('PartialSerializedCGEntry'),
+        ops: sb.list('SSDeltaOp'),
+      }
+    },
+
     NetMessage: {
       type: 'enum',
       variants: {
         Hello: {
           fields: {
-            versionSummary: sb.map('string', sb.list('SeqRange'))
+            inboxVersion: sb.map('string', sb.list('SeqRange')),
+            sync: sb.ref('SyncConfig'),
           }
         },
 
-        Delta: {
+        InboxDelta: {
           fields: {
-            cg: sb.list('PartialSerializedCGEntry'),
-            ops: sb.map(LV, 'Op', 'map'),
+            delta: sb.ref('SSDelta'),
+            // cg: sb.list('PartialSerializedCGEntry'),
+            // ops: sb.map(LV, 'Op', 'map'),
           }
         }
       }
     }
   }
 }
-
-{
-  let helloMsg: NetMsg = {type: 'Hello', versionSummary: {seph: [[0, 23]]}}
-  testSimpleRoundTrip(appNetSchema, 'NetMessage', helloMsg)
-
-  let deltaMsg: NetMsg = {
-    type: 'Delta',
-    cg: [{agent: 'fred', seq: 2, len: 2, parents: []}],
-    ops: new Map([
-      [1, {type: 'set', val: 'hello'}]
-    ])
-  }
-  testSimpleRoundTrip(appNetSchema, 'NetMessage', deltaMsg)
-}
-
-
 
 export const localDbSchema = sb.extendSchema(appDbSchema)
 export const localNetSchema = sb.extendSchema(appNetSchema)

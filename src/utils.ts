@@ -72,3 +72,9 @@ export const resolvable = <T = void>(): {promise: Promise<T>, resolve(val: T): v
 }
 
 export const wait = (timeout: number) => new Promise((res) => setTimeout(res, timeout))
+
+export const assertSorted = (v: number[]) => {
+  for (let i = 1; i < v.length; i++) {
+    if (v[i-1] >= v[i]) throw Error('Version not sorted')
+  }
+}
