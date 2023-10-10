@@ -314,7 +314,7 @@ export function applyRemoteOp(entry: DbEntry, op: Op): LV {
   return newVersion
 }
 
-export function localMapInsert(entry: DbEntry, id: RawVersion, mapId: LV, key: string, val: CreateValue): [Op, LV] {
+export function localMapInsert(entry: DbEntry, id: RawVersion, mapId: LV, key: MapKey, val: CreateValue): [Op, LV] {
   // const crdt = getMap(entry, mapId)
 
   const crdtId = causalGraph.lvToRaw(entry.cg, mapId)
@@ -334,51 +334,52 @@ export function localMapInsert(entry: DbEntry, id: RawVersion, mapId: LV, key: s
   return [op, v]
 }
 
-// /** Recursively set / insert values into the map to make the map resemble the input */
-// export function recursivelySetMap(entry: DbEntry, agent: AgentVersion, mapId: LV, val: Record<string, Primitive>) {
-//   // The root value already exists. Recursively insert / replace child items.
-//   const crdt = getMap(entry, mapId)
+/** Recursively set / insert values into the map to make the map resemble the input */
+export function recursivelySetMap(entry: DbEntry, localAgent: AgentVersion, mapId: LV, val: Record<string, Primitive>) {
+  // The root value already exists. Recursively insert / replace child items.
+  const crdt = getMap(entry, mapId)
 
-//   for (const k in val) {
-//     const v = val[k]
-//     // console.log(k, v)
-//     if (v === null || typeof v !== 'object') {
-//       // Set primitive into register.
-//       // This is a bit inefficient - it re-queries the CRDT and whatnot.
-//       // console.log('localMapInsert', v)
-//       localMapInsert(entry, nextVersion(agent), mapId, k, {type: 'primitive', val: v})
-//     } else {
-//       if (Array.isArray(v)) throw Error('Arrays not supported') // Could just move this up for now.
+  for (const k in val) {
+    const v = val[k]
+    // console.log(k, v)
+    if (v === null || typeof v !== 'object') {
+      // Set primitive into register.
+      // This is a bit inefficient - it re-queries the CRDT and whatnot.
+      // console.log('localMapInsert', v)
+      localMapInsert(entry, nextVersion(localAgent), mapId, k, {type: 'primitive', val: v})
+    } else {
+      if (Array.isArray(v)) throw Error('Arrays not supported') // Could just move this up for now.
 
-//       // Or we have a recursive object merge.
-//       const inner = crdt.registers.get(k)
+      // Or we have a recursive object merge.
+      const inner = crdt.registers.get(k)
 
-//       // Force the inner item to become a map. Rawr.
-//       let innerMapId
-//       const setToMap = () => (
-//         localMapInsert(entry, nextVersion(agent), mapId, k, {type: "crdt", crdtKind: 'map'})[1]
-//       )
+      // Force the inner item to become a map. Rawr.
+      let innerMapId
+      const setToMap = () => (
+        localMapInsert(entry, nextVersion(localAgent), mapId, k, {type: "crdt", crdtKind: 'map'})[1]
+      )
 
-//       if (inner == null) innerMapId = setToMap()
-//       else {
-//         const versions = inner.map(pair => pair[0])
-//         const activeVersion = causalGraph.tieBreakVersions(entry.cg, versions as AtLeast1<LV>)
+      if (inner == null) innerMapId = setToMap()
+      else {
+        // const versions = inner.map(pair => pair[0])
+        const [lv, val] = causalGraph.tieBreakPairs(entry.cg, inner)
 
-//         if (activePair.type !== 'crdt') {
-//           innerMapId = setToMap()
-//         } else {
-//           const innerId = activePair.id
-//           const innerInfo = entry.crdts.get(innerId)!
-//           if (innerInfo.type !== 'map') innerMapId = setToMap()
-//           else innerMapId = innerId
-//         }
-//       }
+        if (val.type !== 'crdt') {
+          // Its value is a primitive. Set it to a map as well.
+          innerMapId = setToMap()
+        } else {
+          // The inner value is a CRDT. Check what it is.
+          const innerInfo = entry.crdts.get(lv)!
+          if (innerInfo.type !== 'map') innerMapId = setToMap()
+          else innerMapId = lv
+        }
+      }
 
-//       // console.log('recursivelySetMap', innerMapId, v)
-//       recursivelySetMap(entry, agent, innerMapId, v)
-//     }
-//   }
-// }
+      // console.log('recursivelySetMap', innerMapId, v)
+      recursivelySetMap(entry, localAgent, innerMapId, v)
+    }
+  }
+}
 
 // export function recursivelySetRoot(entry: DbEntry, agent: AgentVersion, val: Record<string, Primitive>) {
 //   // The root value already exists. Recursively insert / replace child items.
@@ -585,45 +586,66 @@ export function mergePartialDiff(entry: DbEntry, delta: DbEntryDiff) {
 }
 
 
-;(() => {
+// ;(() => {
 
-  const console = new Console({
-    stdout: process.stdout,
-    stderr: process.stderr,
-    inspectOptions: {depth: null}
-  })
+//   const console = new Console({
+//     stdout: process.stdout,
+//     stderr: process.stderr,
+//     inspectOptions: {depth: null}
+//   })
 
-  const entry = createEntry()
-  localMapInsert(entry, ['seph', 0], ROOT_LV, 'cool', {type: 'primitive', val: true})
-  // localMapInsert(entry, ['seph', 1], ROOT_LV, 'cool', {type: 'primitive', val: false})
-  // localMapInsert(entry, ['seph', 1], ROOT_LV, 'beans', {type: 'primitive', val: 123})
-  const [_op, k] = localMapInsert(entry, ['seph', 1], ROOT_LV, 'beans', {type: 'crdt', crdtKind: 'register'})
-  // localMapInsert(entry, ['seph', 2], k, 'beans', {type: 'crdt', crdtKind: 'register'})
-
-
-  let diff = serializePartialSince(entry, [])
-  const e2 = createEntry()
-  mergePartialDiff(e2, diff)
-
-  applyRemoteOp(entry, {
-    action: {
-      type: 'registerSet',
-      val: {type: 'primitive', val: 'cool'},
-    },
-    crdtId: causalGraph.lvToRaw(entry.cg, k),
-    id: ['seph', 2],
-    parents: [['seph', 1]],
-  })
-
-  diff = serializePartialSince(entry, [1])
-  console.log(diff)
-  // let diff =
-  mergePartialDiff(e2, diff)
+//   const entry = createEntry()
+//   localMapInsert(entry, ['seph', 0], ROOT_LV, 'cool', {type: 'primitive', val: true})
+//   // localMapInsert(entry, ['seph', 1], ROOT_LV, 'cool', {type: 'primitive', val: false})
+//   // localMapInsert(entry, ['seph', 1], ROOT_LV, 'beans', {type: 'primitive', val: 123})
+//   const [_op, k] = localMapInsert(entry, ['seph', 1], ROOT_LV, 'beans', {type: 'crdt', crdtKind: 'register'})
+//   // localMapInsert(entry, ['seph', 2], k, 'beans', {type: 'crdt', crdtKind: 'register'})
 
 
-  console.log(entry)
-  // console.log(diff)
+//   let diff = serializePartialSince(entry, [])
+//   const e2 = createEntry()
+//   mergePartialDiff(e2, diff)
 
-  console.log(e2)
+//   applyRemoteOp(entry, {
+//     action: {
+//       type: 'registerSet',
+//       val: {type: 'primitive', val: 'cool'},
+//     },
+//     crdtId: causalGraph.lvToRaw(entry.cg, k),
+//     id: ['seph', 2],
+//     parents: [['seph', 1]],
+//   })
 
-})()
+//   diff = serializePartialSince(entry, [1])
+//   console.log(diff)
+//   // let diff =
+//   mergePartialDiff(e2, diff)
+
+
+//   console.log(entry)
+//   // console.log(diff)
+
+//   console.log(e2)
+
+// })()
+
+// ;(() => {
+
+//   const console = new Console({
+//     stdout: process.stdout,
+//     stderr: process.stderr,
+//     inspectOptions: {depth: null}
+//   })
+
+//   const entry = createEntry()
+
+//   const agent: AgentVersion = ['seph', 0]
+//   recursivelySetMap(entry, agent, ROOT_LV, {
+//     cool: true,
+//     yo: {
+//       x: 5, y: 7
+//     }
+//   })
+
+//   console.log(entry)
+// })()
