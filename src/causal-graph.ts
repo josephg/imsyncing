@@ -546,10 +546,34 @@ export const versionContainsLV = (cg: CausalGraph, frontier: LV[], target: LV): 
   return false
 }
 
+/** Find the dominators amongst the input versions.
+ *
+ * Each item in the input will be output to the callback function exactly once.
+ *
+ * If a version is repeated, it will only ever be counted as a dominator once.
+ *
+ * The versions will be yielded from largest to smallest.
+ */
 export function findDominators2(cg: CausalGraph, versions: LV[], cb: (v: LV, isDominator: boolean) => void) {
   if (versions.length === 0) return
-  if (versions.length === 1) {
+  else if (versions.length === 1) {
     cb(versions[0], true)
+    return
+  }
+  else if (versions.length === 2) {
+    // We can delegate to versionContainsLV, which is simpler.
+    // TODO: Check if this fast path actually helps at all.
+    let [v0, v1] = versions
+    if (v0 === v1) {
+      cb(v0, true)
+      cb(v0, false)
+    } else {
+      if (v0 > v1) [v0, v1] = [v1, v0]
+      // v0 < v1. So v1 must be a dominator.
+      cb(v1, true)
+      // I could use compareVersions, but we'll always hit the same case there.
+      cb(v0, !versionContainsLV(cg, [v1], v0))
+    }
     return
   }
 
@@ -888,9 +912,9 @@ export function mergePartialVersions(cg: CausalGraph, data: PartialSerializedCGV
   for (const {agent, seq, len, parents} of data) {
     addRaw(cg, [agent, seq], len, parents)
   }
-
   return [start, nextLV(cg)]
 }
+
 export function *mergePartialVersions2(cg: CausalGraph, data: PartialSerializedCGV2) {
   // const start = nextLV(cg)
 
@@ -912,6 +936,41 @@ export function advanceVersionFromSerialized(cg: CausalGraph, data: PartialSeria
   // NOTE: Callers might need to call findDominators on the result.
   return version
 }
+
+/** I'm sending a lot of CG delta offsets instead of RawVersions because they're smaller
+ * (though using schemaboi the difference is probably pretty minimal). This code lets us
+ * convert from offsets back to LVs. First the CG diff is "enhanced" to contain offsets
+ * in each entry. Then we can use binary search to find the entry containing a specific
+ * offset and convert it to a native LV.
+ */
+export type EnhancedPartialSerializedCG = (PartialSerializedCGEntryV2 & {offset: number})[]
+
+export function enhanceCGDiff(diff: PartialSerializedCGV2): EnhancedPartialSerializedCG {
+  let offset = 0
+  for (const e of diff) {
+    let ee: PartialSerializedCGEntryV2 & {offset?: number} = e
+    ee.offset = offset
+    offset += ee.len
+  }
+  return diff as EnhancedPartialSerializedCG
+}
+
+export function diffOffsetToLV(cg: CausalGraph, diff: EnhancedPartialSerializedCG, offset: number): LV {
+  let idx = bs(diff, offset, (entry, needle) => entry.offset - needle)
+  if (idx < 0) idx = -idx - 1 // Start at the next entry.
+  if (idx >= diff.length) throw Error('Invalid offset - past end of diff')
+
+  const e = diff[idx]
+  if (offset < e.offset || offset >= (e.offset + e.len)) throw Error('Invalid state - offset not found in entry')
+
+  return rawToLV(cg, e.agent, e.seq + (offset - e.offset))
+}
+
+export function diffOffsetToMaybeLV(cg: CausalGraph, oldNextLV: LV, diff: EnhancedPartialSerializedCG, offset: number): LV {
+  const lv = diffOffsetToLV(cg, diff, offset)
+  return lv < oldNextLV ? -1 : lv
+}
+
 
 // ;(() => {
 //   const cg1 = create()
@@ -962,3 +1021,17 @@ export function advanceVersionFromSerialized(cg: CausalGraph, data: PartialSeria
 //   // [15]
 //   console.dir(intersectWithSummary(cg, summary), {depth: null})
 // })()
+
+;(() => {
+  const cg = create()
+
+  add(cg, 'a', 0, 5, [])
+  add(cg, 'b', 0, 10, [2])
+  add(cg, 'a', 5, 10, [4, 14])
+
+  console.log(findDominators2(cg, [2, 1], (lv, isDom) => {
+    console.log(lv, isDom)
+  }))
+
+  // console.log(compareVersions(cg, 1, 2))
+})()

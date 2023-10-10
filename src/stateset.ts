@@ -1,12 +1,10 @@
-import { AtLeast1, LV, LVRange, Primitive, RawVersion } from "./types.js"
+import { AtLeast1, LV, LVRange, Primitive, RawVersion, Pair } from "./types.js"
 import { CausalGraph } from "./causal-graph.js"
 import * as causalGraph from './causal-graph.js'
 import bs from 'binary-search'
 import assert from 'assert/strict'
 import { assertSorted } from "./utils.js"
-
-type Pair<T=Primitive> = [LV, T]
-// type RawPair<T=Primitive> = [RawVersion, T]
+import { LMIndex, addIndex, checkIndex, entriesBetween, lookupIndex, removeIndex } from "./last-modified-index.js"
 
 /** StateSet implements a simple CRDT set object with no history.
  *
@@ -25,7 +23,7 @@ export interface StateSet<T=Primitive> {
    * Each key could show up multiple times if it currently has multiple values.
    * The list is sorted by v.
    */
-  index: { lv: LV, key: LV }[],
+  index: LMIndex,
 
   cg: CausalGraph,
 }
@@ -51,33 +49,6 @@ export function hydrate<T>(values: StateSet<T>['values'], cg: CausalGraph): Stat
   return { values, index, cg }
 }
 
-function rawLookup<T>(crdt: StateSet<T>, v: LV): number {
-  return bs(crdt.index, v, (entry, needle) => entry.lv - needle)
-}
-
-function removeIndex<T>(crdt: StateSet<T>, v: LV) {
-  const idx = rawLookup(crdt, v)
-  if (idx < 0) throw Error('Missing old version in index')
-
-  // Splice the entry out. The entry will usually be near the end, so this is
-  // not crazy slow.
-  crdt.index.splice(idx, 1)
-}
-
-function addIndex<T>(crdt: StateSet<T>, lv: LV, key: LV) {
-  const entry = {lv, key}
-
-  if (crdt.index.length == 0 || crdt.index[crdt.index.length - 1].lv < lv) {
-    // Normal, fast case.
-    crdt.index.push(entry)
-  } else {
-    const idx = rawLookup(crdt, lv)
-    if (idx >= 0) return // Already indexed.
-    const insIdx = -idx - 1
-    crdt.index.splice(insIdx, 0, entry)
-  }
-}
-
 /** Set the key to a new value. The caller should create a new version for the operation, and pass that in. */
 export function localSet<T>(crdt: StateSet<T>, version: RawVersion, key: LV | -1, value: T): LV {
   const lv = causalGraph.addRaw(crdt.cg, version)!.version
@@ -89,12 +60,7 @@ export function localSet<T>(crdt: StateSet<T>, version: RawVersion, key: LV | -1
   if (oldPairs != null) {
     for (const [v, oldValue] of oldPairs) {
       // Remove from index
-      const idx = rawLookup(crdt, v)
-      if (idx < 0) throw Error('Missing old version in index')
-
-      // Splice the entry out. The entry will usually be near the end, so this is
-      // not crazy slow.
-      crdt.index.splice(idx, 1)
+      removeIndex(crdt.index, v)
     }
   }
 
@@ -106,19 +72,6 @@ export function localSet<T>(crdt: StateSet<T>, version: RawVersion, key: LV | -1
 /** Returns key of new item */
 export function localInsert<T>(crdt: StateSet<T>, version: RawVersion, value: T): LV {
   return localSet(crdt, version, -1, value)
-}
-
-/** Get a list of the keys which have been modified in the range of `[since..]` */
-export function modifiedKeysSince<T>(crdt: StateSet<T>, since: LV): LV[] {
-  let idx = rawLookup(crdt, since)
-  if (idx < 0) idx = -idx - 1
-
-  const result = new Set<LV>() // To uniq() the results.
-  for (; idx < crdt.index.length; idx++) {
-    const {key} = crdt.index[idx]
-    result.add(key)
-  }
-  return Array.from(result)
 }
 
 // *** Remote state ***
@@ -148,13 +101,7 @@ export function deltaSince<T>(crdt: StateSet<T>, v: LV[] = []): SSDelta<T> {
 
   let offset = 0
   for (const [start, end] of ranges) {
-    let idx = rawLookup(crdt, start)
-    if (idx < 0) idx = -idx - 1 // Start at the next entry.
-
-    for (; idx < crdt.index.length; idx++) {
-      const {key, lv: v} = crdt.index[idx]
-      if (v >= end) break
-
+    for (const {key, lv: v} of entriesBetween(crdt.index, start, end)) {
       // I could just add the data to ops, but this way we make sure to
       // only include the pairs within the requested range.
 
@@ -181,6 +128,7 @@ export function deltaSince<T>(crdt: StateSet<T>, v: LV[] = []): SSDelta<T> {
 function mergeSet<T>(crdt: StateSet<T>, key: LV, givenRawPairs: AtLeast1<Pair<T>>) {
   // const lv = causalGraph.addRaw(crdt.cg, version, 1, parents)
 
+  // Editing the old list in-place.
   const pairs: Pair<T>[] = crdt.values.get(key) ?? []
 
   const oldVersions = pairs.map(([v]) => v)
@@ -190,7 +138,7 @@ function mergeSet<T>(crdt: StateSet<T>, key: LV, givenRawPairs: AtLeast1<Pair<T>
     // There's 3 options here: Its in old, its in new, or its in both.
     if (isDominator && !oldVersions.includes(v)) {
       // Its in new only. Add it!
-      addIndex(crdt, v, key)
+      addIndex(crdt.index, v, key)
 
       const idx = newVersions.indexOf(v)
       if (idx < 0) throw Error('Invalid state')
@@ -198,7 +146,7 @@ function mergeSet<T>(crdt: StateSet<T>, key: LV, givenRawPairs: AtLeast1<Pair<T>
 
     } else if (!isDominator && !newVersions.includes(v)) {
       // The item is in old only, and its been superceded. Remove it!
-      removeIndex(crdt, v)
+      removeIndex(crdt.index, v)
       const idx = pairs.findIndex(([v2]) => v2 === v)
       if (idx < 0) throw Error('Invalid state')
       pairs.splice(idx, 1)
@@ -215,6 +163,20 @@ export function mergeDelta<T>(crdt: StateSet<T>, delta: SSDelta<T>): LVRange {
   // I'll gather the incoming data by key, and process each key one at a time.
   // This is a sparse list.
   const newPairs: AtLeast1<Pair<T>>[] = []
+
+  // This code should also be correct.
+  // const [start, end] = causalGraph.mergePartialVersions(crdt.cg, delta.cg)
+  // const cgDeltaEnh = causalGraph.enhanceCGDiff(delta.cg)
+
+  // for (const {vOffset, key: keyRaw, val} of delta.ops) {
+  //   const lv = causalGraph.diffOffsetToMaybeLV(crdt.cg, start, cgDeltaEnh, vOffset)
+  //   if (lv < 0) continue // We already have this delta.
+
+  //   const key = causalGraph.rawToLV2(crdt.cg, keyRaw)
+
+  //   if (newPairs[key] == null) newPairs[key] = [[lv, val]]
+  //   else newPairs[key].push([lv, val])
+  // }
 
   let offset = 0
   for (const entry of causalGraph.mergePartialVersions2(crdt.cg, delta.cg)) {
@@ -245,14 +207,6 @@ export function mergeDelta<T>(crdt: StateSet<T>, delta: SSDelta<T>): LVRange {
   return [startLV, causalGraph.nextLV(crdt.cg)]
 }
 
-
-function lookupIndex<T>(crdt: StateSet<T>, v: LV): LV | null {
-  const result = rawLookup(crdt, v)
-
-  return result < 0 ? null
-    : crdt.index[result].key
-}
-
 function check<T>(crdt: StateSet<T>) {
   let expectedIdxSize = 0
 
@@ -273,10 +227,11 @@ function check<T>(crdt: StateSet<T>) {
 
     // Each entry should show up in the index.
     for (const [vv] of pairs) {
-      assert.equal(key, lookupIndex(crdt, vv))
+      assert.equal(key, lookupIndex(crdt.index, vv))
     }
   }
 
+  checkIndex(crdt.index)
   assert.equal(expectedIdxSize, crdt.index.length)
 }
 

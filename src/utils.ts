@@ -78,3 +78,5 @@ export const assertSorted = (v: number[]) => {
     if (v[i-1] >= v[i]) throw Error('Version not sorted')
   }
 }
+
+export const errExpr = (str: string): never => { throw Error(str) }

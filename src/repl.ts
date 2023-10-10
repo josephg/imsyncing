@@ -2,11 +2,11 @@ import repl from 'node:repl'
 import * as dbLib from './db.js'
 import * as causalGraph from './causal-graph.js'
 import * as ss from './stateset.js'
-import { LV, Primitive, RawVersion } from './types.js'
+import { Db, LV, Primitive, RawVersion } from './types.js'
 import { nextVersion } from './utils.js'
 
 // ***** REPL
-export default function startRepl(db: dbLib.Db) {
+export default function startRepl(db: Db) {
   const r = repl.start({
     prompt: '> ',
     useColors: true,

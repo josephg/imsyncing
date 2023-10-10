@@ -1,9 +1,8 @@
 import * as causalGraph from "./causal-graph.js";
-import { Op, AtLeast1, LV, NetMsg, Primitive, RawOperation, RawVersion, VersionSummary } from "./types.js";
-import { AgentVersion, createAgent, min2, nextVersion, resolvable, wait } from "./utils.js";
+import { LV, NetMsg, VersionSummary, Db } from "./types.js";
+import { resolvable, wait } from "./utils.js";
 import * as database from './db.js'
 import * as ss from './stateset.js'
-import * as sb from 'schemaboi'
 import * as net from 'node:net'
 
 import {Console} from 'node:console'
@@ -11,6 +10,7 @@ import { localNetSchema } from "./schema.js";
 import handle from "./message-stream.js";
 import { finished } from "node:stream";
 import startRepl from './repl.js'
+import { modifiedKeysSince } from "./last-modified-index.js";
 
 
 const console = new Console({
@@ -60,9 +60,12 @@ const console = new Console({
 //   }
 // })
 
-const runProtocol = (sock: net.Socket, db: database.Db): Promise<void> => {
-  type ProtocolState = {state: 'waitingForVersion'} | {
+const runProtocol = (sock: net.Socket, db: Db): Promise<void> => {
+  type ProtocolState = {
+    state: 'waitingForHello'
+  } | {
     state: 'established',
+
     /**
      * The version that we expect the remote peer to have.
      * This includes sent versions that haven't been acknowledged yet.
@@ -80,7 +83,7 @@ const runProtocol = (sock: net.Socket, db: database.Db): Promise<void> => {
     unknownVersions: VersionSummary | null
   }
 
-  let state: ProtocolState = {state: 'waitingForVersion'}
+  let state: ProtocolState = { state: 'waitingForHello' }
 
   const finishPromise = resolvable()
 
@@ -88,7 +91,7 @@ const runProtocol = (sock: net.Socket, db: database.Db): Promise<void> => {
   const sendInboxDelta = (sinceVersion: LV[]) => {
     console.log('sending delta to', sock.remoteAddress, sock.remotePort, 'since', sinceVersion)
     const delta = ss.deltaSince(db.inbox, sinceVersion)
-    write({type: 'InboxDelta', delta})
+    write({ type: 'InboxDelta', delta })
   }
 
   const onVersionChanged = () => {
@@ -122,7 +125,7 @@ const runProtocol = (sock: net.Socket, db: database.Db): Promise<void> => {
 
     switch (msg.type) {
       case 'Hello': {
-        if (state.state !== 'waitingForVersion') throw Error('Unexpected connection state')
+        if (state.state !== 'waitingForHello') throw Error('Unexpected connection state')
 
         // When we get the known versions, we always send a delta so the remote
         // knows they're up to date (even if they were already anyway).
@@ -177,7 +180,7 @@ const runProtocol = (sock: net.Socket, db: database.Db): Promise<void> => {
         state.unknownVersions = null
 
         if (updated[0] !== updated[1]) {
-          const keys = ss.modifiedKeysSince(db.inbox, updated[0])
+          const keys = modifiedKeysSince(db.inbox.index, updated[0])
           console.log('Modified inbox keys', keys)
         }
 
@@ -205,7 +208,7 @@ const runProtocol = (sock: net.Socket, db: database.Db): Promise<void> => {
   return finishPromise.promise
 }
 
-const serverOnPort = (port: number, db: database.Db) => {
+const serverOnPort = (port: number, db: Db) => {
   const server = net.createServer(async sock => {
     console.log('got server socket connection', sock.remoteAddress, sock.remotePort)
     runProtocol(sock, db)
@@ -217,7 +220,7 @@ const serverOnPort = (port: number, db: database.Db) => {
   })
 }
 
-const connect1 = (host: string, port: number, db: database.Db) => {
+const connect1 = (host: string, port: number, db: Db) => {
   const sock = net.connect({port, host}, () => {
     console.log('connected!')
     runProtocol(sock, db)
@@ -225,7 +228,7 @@ const connect1 = (host: string, port: number, db: database.Db) => {
 }
 
 
-const connect = (host: string, port: number, db: database.Db) => {
+const connect = (host: string, port: number, db: Db) => {
   ;(async () => {
     while (true) {
       console.log('Connecting to', host, port, '...')

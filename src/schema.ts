@@ -2,7 +2,7 @@ import * as sb from 'schemaboi'
 import { LV, NetMsg, Primitive, RawVersion } from "./types.js";
 import * as cg from './causal-graph.js';
 import EventEmitter from 'events';
-import { Db } from './db.js';
+import { Db } from "./types.js";
 import * as ss from './stateset.js';
 
 const LV = sb.prim('u64')

@@ -1,66 +1,9 @@
-import * as causalGraph from "./causal-graph.js";
-import { Op, AtLeast1, LV, OpSet, Primitive, RawOperation, RawVersion, CRDTInfo, SyncConfig } from "./types.js";
-import { AgentVersion, createAgent, min2, nextVersion, rateLimit } from "./utils.js";
+import { createAgent, rateLimit } from "./utils.js";
 import * as sb from 'schemaboi'
 import {localDbSchema} from './schema.js'
 import * as fs from 'node:fs'
 import * as ss from "./stateset.js"
-
-// export interface DbOld {
-//   cg: causalGraph.CausalGraph,
-
-//   /**
-//    * Checked out version.
-//    *
-//    * Note there's a similar variable called cg.heads which names the 'global'
-//    * heads - which is what we sync. But we could be looking at an earlier
-//    * version.
-//    */
-//   branch: LV[],
-
-//   // val: [LV, Primitive][],
-//   ops: Map<number, Op>, // Local version to op. Could trim?
-
-//   agent: AgentVersion,
-
-//   // events: EventEmitter,
-//   listeners: Set<(from: 'local' | 'remote') => void>,
-// }
-
-/** A single entry in the database.
- *
- * Each db entry contains a tree of CRDT objects that can be modified in
- * atomic transactions. The entire entry is synced together - you can't sync
- * a partial view of a DbEntry.
- */
-export interface DbEntry {
-  crdts: Map<LV, CRDTInfo>,
-  cg: causalGraph.CausalGraph,
-
-  /**
-   * Checked out version.
-   *
-   * Note there's a similar variable called cg.heads which names the 'global'
-   * heads - which is what we sync. But we could be looking at an earlier
-   * version on this peer.
-   */
-  branch: LV[],
-
-  // Ops.
-}
-
-export interface Db {
-  inbox: ss.StateSet, // Includes its own causal graph.
-  entries: Map<LV, DbEntry>,
-
-  agent: AgentVersion,
-
-  syncConfig: SyncConfig,
-
-  // TODO: Separate listeners on the index from listeners on a db entry.
-  listeners: Set<(from: 'local' | 'remote') => void>,
-}
-
+import { Db } from "./types.js";
 
 export const createDb = (): Db => ({
   inbox: ss.create(),
