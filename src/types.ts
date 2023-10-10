@@ -26,10 +26,10 @@ export type Primitive = null
   | Primitive[]
   | {[k: string]: Primitive}
 
-export type CRDTMapKey = boolean | string | number
+export type MapKey = boolean | string | number
 
-/** Helper type for a list with at least 1 entry in it. */
-export type AtLeast1<T> = [T, ...T[]]
+// /** Helper type for a list with at least 1 entry in it. */
+// export type AtLeast1<T> = [T, ...T[]]
 
 // export type VersionSummary = [string, [number, number][]][]
 export interface VersionSummary {[agent: string]: [number, number][]}
@@ -45,31 +45,33 @@ export type Pair<T=Primitive> = [LV, T]
 
 
 export type RegisterValue = {type: 'primitive', val: Primitive}
-  | {type: 'crdt', id: LV} // A unique (owned) CRDT.
-  | {type: 'ref', id: LV} // A reference to another CRDT in this entry. May be null.
+  | {type: 'crdt'} // A unique (owned) CRDT.
+  // | {type: 'ref', id: LV} // A reference to another CRDT in this entry. May be null.
 
 /** This register stores a list of its current [LV, value] pairs.
  *
  * It has no history. We need to do something else to add history.
  */
-export type MVRegister = AtLeast1<Pair<RegisterValue>>
+export type MVRegister = Pair<RegisterValue>[]
+// export type MVRegister = AtLeast1<Pair<RegisterValue>>
 
 
-export type CRDTMapInfo = { type: 'map', registers: Map<CRDTMapKey, MVRegister> }
+export type CRDTMapInfo = { type: 'map', registers: Map<MapKey, MVRegister> }
 /** When there's no history, sets have deleted values removed perminantly. */
 export type CRDTSetInfo = { type: 'set', values: Map<LV, RegisterValue> }
 export type CRDTRegisterInfo = { type: 'register', value: MVRegister }
 
-export type CRDTInfo = CRDTMapInfo | CRDTSetInfo | CRDTRegisterInfo
-// export type CRDTInfo = CRDTRegisterInfo
+// export type CRDTInfo = CRDTMapInfo | CRDTSetInfo | CRDTRegisterInfo
+export type CRDTInfo = CRDTMapInfo | CRDTRegisterInfo
 
 
 // *** Operations. This is for ops on a DbEntry. ***
 export type CreateValue = {type: 'primitive', val: Primitive}
+  // | {type: 'ref', target: LV}
   | {type: 'crdt', crdtKind: 'map' | 'set' | 'register'}
 
 export type Action =
-{ type: 'map', key: CRDTMapKey, val: CreateValue }
+{ type: 'map', key: MapKey, val: CreateValue }
 | { type: 'registerSet', val: CreateValue }
 | { type: 'setInsert', val: CreateValue }
 | { type: 'setDelete', target: RawVersion }
@@ -148,7 +150,7 @@ export interface DbEntry {
    * scanning the map a lot to find what is getting changed. The alternative is to
    * make a bigger index which stores the keys as well. Not sure whats better here!
    */
-  index: LMIndex<LV>,
+  index: LMIndex<{key: LV, mapKey: MapKey | null}>,
 
   /** Entries can either store their history or not. This is for now a global
    * (per doc) setting for the entire network. Ie, peers can't individually decide

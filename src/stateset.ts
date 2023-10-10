@@ -1,4 +1,4 @@
-import { AtLeast1, LV, LVRange, Primitive, RawVersion, Pair } from "./types.js"
+import { LV, LVRange, Primitive, RawVersion, Pair } from "./types.js"
 import { CausalGraph } from "./causal-graph.js"
 import * as causalGraph from './causal-graph.js'
 import bs from 'binary-search'
@@ -13,7 +13,7 @@ import { LMIndex, addIndex, checkIndex, entriesBetween, lookupIndex, removeIndex
 export interface StateSet<T=Primitive> {
   // ID -> [current value, current version] pairs.
   // NOTE: This is a MV register which only (always) stores primitive values.
-  values: Map<LV, AtLeast1<Pair<T>>>,
+  values: Map<LV, Pair<T>[]>,
 
   /**
    * This is an index to quickly find the items to send when syncing.
@@ -23,7 +23,7 @@ export interface StateSet<T=Primitive> {
    * Each key could show up multiple times if it currently has multiple values.
    * The list is sorted by v.
    */
-  index: LMIndex,
+  index: LMIndex<{key: LV}>,
 
   cg: CausalGraph,
 }
@@ -125,7 +125,7 @@ export function deltaSince<T>(crdt: StateSet<T>, v: LV[] = []): SSDelta<T> {
   }
 }
 
-function mergeSet<T>(crdt: StateSet<T>, key: LV, givenRawPairs: AtLeast1<Pair<T>>) {
+function mergeSet<T>(crdt: StateSet<T>, key: LV, givenRawPairs: Pair<T>[]) {
   // const lv = causalGraph.addRaw(crdt.cg, version, 1, parents)
 
   // Editing the old list in-place.
@@ -138,7 +138,7 @@ function mergeSet<T>(crdt: StateSet<T>, key: LV, givenRawPairs: AtLeast1<Pair<T>
     // There's 3 options here: Its in old, its in new, or its in both.
     if (isDominator && !oldVersions.includes(v)) {
       // Its in new only. Add it!
-      addIndex(crdt.index, v, key)
+      addIndex(crdt.index, {lv: v, key})
 
       const idx = newVersions.indexOf(v)
       if (idx < 0) throw Error('Invalid state')
@@ -154,7 +154,7 @@ function mergeSet<T>(crdt: StateSet<T>, key: LV, givenRawPairs: AtLeast1<Pair<T>
   })
 
   if (pairs.length < 1) throw Error('Invalid pairs - all removed?')
-  crdt.values.set(key, pairs as AtLeast1<Pair<T>>)
+  crdt.values.set(key, pairs as Pair<T>[])
 }
 
 export function mergeDelta<T>(crdt: StateSet<T>, delta: SSDelta<T>): LVRange {
@@ -162,7 +162,7 @@ export function mergeDelta<T>(crdt: StateSet<T>, delta: SSDelta<T>): LVRange {
 
   // I'll gather the incoming data by key, and process each key one at a time.
   // This is a sparse list.
-  const newPairs: AtLeast1<Pair<T>>[] = []
+  const newPairs: Pair<T>[][] = []
 
   // This code should also be correct.
   // const [start, end] = causalGraph.mergePartialVersions(crdt.cg, delta.cg)

@@ -4,7 +4,7 @@
 import PriorityQueue from 'priorityqueuejs'
 import bs from 'binary-search'
 // import {AtLeast1, LV, LVRange, Primitive, RawVersion, ROOT, ROOT_LV, VersionSummary} from './types.js'
-import {AtLeast1, LV, LVRange, RawVersion, ROOT, ROOT_LV, VersionSummary} from './types.js'
+import {LV, LVRange, RawVersion, ROOT, ROOT_LV, VersionSummary} from './types.js'
 import { pushRLEList, tryRangeAppend, tryRevRangeAppend } from './rle.js'
 import {max2, min2} from './utils.js'
 
@@ -185,7 +185,8 @@ const versionCmp = ([a1, s1]: RawVersion, [a2, s2]: RawVersion) => (
     : s1 - s2
 )
 
-export const tieBreakVersions = <T>(cg: CausalGraph, data: AtLeast1<LV>): LV => {
+export const tieBreakVersions = <T>(cg: CausalGraph, data: LV[]): LV => {
+  if (data.length === 0) throw Error('Cannot tie break from an empty set')
   let winner = data.reduce((a, b) => {
     // Its a bit inefficient doing this lookup multiple times for the winning item,
     // but eh. The data set will almost always contain exactly 1 item anyway.
@@ -956,7 +957,11 @@ export function enhanceCGDiff(diff: PartialSerializedCGV2): EnhancedPartialSeria
 }
 
 export function diffOffsetToLV(cg: CausalGraph, diff: EnhancedPartialSerializedCG, offset: number): LV {
-  let idx = bs(diff, offset, (entry, needle) => entry.offset - needle)
+  let idx = bs(diff, offset, (entry, needle) => (
+    needle < entry.offset ? 1
+    : needle >= (entry.offset + entry.len) ? -1
+    : 0
+  ))
   if (idx < 0) idx = -idx - 1 // Start at the next entry.
   if (idx >= diff.length) throw Error('Invalid offset - past end of diff')
 
@@ -1022,16 +1027,16 @@ export function diffOffsetToMaybeLV(cg: CausalGraph, oldNextLV: LV, diff: Enhanc
 //   console.dir(intersectWithSummary(cg, summary), {depth: null})
 // })()
 
-;(() => {
-  const cg = create()
+// ;(() => {
+//   const cg = create()
 
-  add(cg, 'a', 0, 5, [])
-  add(cg, 'b', 0, 10, [2])
-  add(cg, 'a', 5, 10, [4, 14])
+//   add(cg, 'a', 0, 5, [])
+//   add(cg, 'b', 0, 10, [2])
+//   add(cg, 'a', 5, 10, [4, 14])
 
-  console.log(findDominators2(cg, [2, 1], (lv, isDom) => {
-    console.log(lv, isDom)
-  }))
+//   console.log(findDominators2(cg, [2, 1], (lv, isDom) => {
+//     console.log(lv, isDom)
+//   }))
 
-  // console.log(compareVersions(cg, 1, 2))
-})()
+//   // console.log(compareVersions(cg, 1, 2))
+// })()

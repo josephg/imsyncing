@@ -1,10 +1,11 @@
 // This file contains methods & tools to interact with database entries.
 // This code was stolen & modified from the DbEntry code in replca's JS implementation.
 
-import { AtLeast1, CRDTInfo, CRDTMapInfo, CreateValue, DbEntry, LV, MVRegister, Op, Pair, Primitive, ROOT_LV, RawVersion, RegisterValue } from "./types.js"
+import { CRDTInfo, CRDTMapInfo, MapKey, CreateValue, DbEntry, LV, MVRegister, Op, Pair, Primitive, ROOT_LV, RawVersion, RegisterValue } from "./types.js"
 import * as causalGraph from './causal-graph.js'
-import { AgentVersion, errExpr, nextVersion } from "./utils.js"
+import { AgentVersion, assertSorted, assertSortedCustom, errExpr, nextVersion } from "./utils.js"
 import { addIndex, entriesBetween, removeIndex } from "./last-modified-index.js"
+import { Console } from "node:console"
 
 const createEntry = (storesHistory: boolean = false): DbEntry => {
   if (storesHistory) throw Error('Storing history is NYI.')
@@ -21,37 +22,37 @@ const createEntry = (storesHistory: boolean = false): DbEntry => {
   }
 }
 
-function removeRecursive(entry: DbEntry, value: RegisterValue) {
-  if (value.type !== 'crdt') return
+function removeRecursive(entry: DbEntry, [lv, val]: Pair<RegisterValue>) {
+  if (val.type !== 'crdt') return
 
-  const crdt = entry.crdts.get(value.id)
+  const crdt = entry.crdts.get(lv)
   if (crdt == null) return
 
   switch (crdt.type) {
     case 'map':
       for (const [k, reg] of crdt.registers) {
-        for (const [version, value] of reg) {
-          removeRecursive(entry, value)
+        for (const pair of reg) {
+          removeRecursive(entry, pair)
         }
       }
       break
     case 'register':
-      for (const [version, value] of crdt.value) {
-        removeRecursive(entry, value)
+      for (const pair of crdt.value) {
+        removeRecursive(entry, pair)
       }
       break
-    case 'set':
-      for (const [id, value] of crdt.values) {
-        removeRecursive(entry, value)
-      }
-      break
+    // case 'set':
+    //   for (const [id, value] of crdt.values) {
+    //     removeRecursive(entry, value)
+    //   }
+    //   break
     // case 'stateset':
     //   throw Error('Cannot remove from a stateset')
       
     default: throw Error('Unknown CRDT type!?')
   }
 
-  entry.crdts.delete(value.id)
+  entry.crdts.delete(lv)
 }
 
 function createCRDT(entry: DbEntry, id: LV, type: 'map' | 'set' | 'register' | 'stateset') {
@@ -66,9 +67,9 @@ function createCRDT(entry: DbEntry, id: LV, type: 'map' | 'set' | 'register' | '
     type: 'register',
     // Registers default to NULL when created.
     value: [[id, {type: 'primitive', val: null}]],
-  } : type === 'set' ? {
-    type: 'set',
-    values: new Map,
+  // } : type === 'set' ? {
+  //   type: 'set',
+  //   values: new Map,
   // } : type === 'stateset' ? {
   //   type: 'stateset',
   //   values: new Map,
@@ -76,7 +77,7 @@ function createCRDT(entry: DbEntry, id: LV, type: 'map' | 'set' | 'register' | '
 
   entry.crdts.set(id, crdtInfo)
 
-  addIndex(entry.index, id, id)
+  addIndex(entry.index, {lv: id, key: id, mapKey: null})
 }
 
 const getMap = (entry: DbEntry, mapId: LV): CRDTMapInfo => {
@@ -162,19 +163,20 @@ const getMap = (entry: DbEntry, mapId: LV): CRDTMapInfo => {
 //   return mergeRegistersSlow(cg, [[newVersion, newVal], ...oldPairs])
 // }
 
-function applyRegisterSet(entry: DbEntry, crdtId: LV, oldPairs: Pair<RegisterValue>[], newVersion: LV, newVal: CreateValue): MVRegister {
+const createToRegValue = (entry: DbEntry, lv: LV, newVal: CreateValue): RegisterValue => {
+  if (newVal.type === 'primitive') {
+    return newVal
+  } else {
+    // Create it.
+    createCRDT(entry, lv, newVal.crdtKind)
+    return {type: "crdt"}
+  }
+}
+
+function applyRegisterSet(entry: DbEntry, crdtId: LV, mapKey: MapKey | null, oldPairs: Pair<RegisterValue>[], newVersion: LV, newVal: CreateValue): MVRegister {
   const oldVersions = oldPairs.map(([v]) => v)
   // The operation is already included.
   if (oldVersions.includes(newVersion)) return oldPairs as MVRegister
-
-  let newValue: RegisterValue
-  if (newVal.type === 'primitive') {
-    newValue = newVal
-  } else {
-    // Create it.
-    createCRDT(entry, newVersion, newVal.crdtKind)
-    newValue = {type: "crdt", id: newVersion}
-  }
 
   // Logic adapted from StateSet.
   const result: Pair<RegisterValue>[] = oldPairs.slice()
@@ -183,12 +185,57 @@ function applyRegisterSet(entry: DbEntry, crdtId: LV, oldPairs: Pair<RegisterVal
     // There's 3 options here: Its in old, its in new, or its in both.
     if (isDominator && v === newVersion) {
       // Its in new only. Add it!
-      addIndex(entry.index, v, crdtId)
+      // console.log('add index', v, crdtId, mapKey, newVersion)
+      addIndex(entry.index, {lv: v, key: crdtId, mapKey})
 
+      let newValue = createToRegValue(entry, newVersion, newVal)
       result.push([newVersion, newValue])
     } else if (!isDominator && v !== newVersion) {
       // The item is old, and its been superceded. Remove it!
-      removeIndex(entry.index, v)
+      // console.log('rm index', v, crdtId, mapKey, oldPairs)
+      if (v !== crdtId) removeIndex(entry.index, v)
+      const idx = result.findIndex(([v2]) => v2 === v)
+      if (idx < 0) throw Error('Invalid state')
+      result.splice(idx, 1)
+    }
+  })
+
+  return result as MVRegister
+}
+
+function mergeRegisters(entry: DbEntry, crdtId: LV, mapKey: MapKey | null, oldPairs: Pair<RegisterValue>[], newCreatePairs: Pair<CreateValue>[]): MVRegister {
+  const oldVersions = oldPairs.map(([v]) => v)
+  for (const [lv] of newCreatePairs) {
+    // I could just discard them, but this just shouldn't happen. Its a sign something else has gone wrong.
+    if (oldVersions.includes(lv)) throw Error('Duplicate versions in merge')
+  }
+
+  // We can't convert the new create pairs into register pairs just yet, because they might not
+  // end up in the final document. ... They will, because its an MV register but ... eh. I'll
+  // do it below because that feels more correct.
+  const newVersions = newCreatePairs.map(([v]) => v)
+
+  // const newPairs = newCreatePairs.map(([lv, val]) => createToRegValue(entry, lv, val))
+
+  // Logic adapted from StateSet.
+  const result: Pair<RegisterValue>[] = oldPairs.slice()
+
+  causalGraph.findDominators2(entry.cg, [...oldVersions, ...newVersions], (v, isDominator) => {
+    // There's 3 options here: Its in old, its in new, or its in both.
+    if (isDominator && !oldVersions.includes(v)) {
+      // Its in new only. Add it!
+      addIndex(entry.index, {lv: v, key: crdtId, mapKey})
+
+      const idx = newVersions.indexOf(v)
+      if (idx < 0) throw Error('Invalid state')
+      result.push([v, createToRegValue(entry, v, newCreatePairs[idx][1])])
+    } else if (!isDominator && !newVersions.includes(v)) {
+      // The item is old, and its been superceded. Remove it!
+
+      // This check is a bit of a hack. The problem it solves is that when a register is created,
+      // it gets an index entry for its creation and a value of null. We don't want to remove the
+      // index entry for its creation until the CRDT itself its removed / replaced. Hence the check.
+      if (v !== crdtId) removeIndex(entry.index, v)
       const idx = result.findIndex(([v2]) => v2 === v)
       if (idx < 0) throw Error('Invalid state')
       result.splice(idx, 1)
@@ -219,46 +266,46 @@ export function applyRemoteOp(entry: DbEntry, op: Op): LV {
   switch (op.action.type) {
     case 'registerSet': {
       if (crdt.type !== 'register') throw Error('Invalid operation type for target')
-      crdt.value = applyRegisterSet(entry, crdtLV, crdt.value, newVersion, op.action.val)
+      crdt.value = applyRegisterSet(entry, crdtLV, null, crdt.value, newVersion, op.action.val)
       break
     }
 
     case 'map': {
       if (crdt.type !== 'map') throw Error('Invalid operation type for target')
       const oldPairs = crdt.registers.get(op.action.key) ?? []
-      const newPairs = applyRegisterSet(entry, crdtLV, oldPairs, newVersion, op.action.val)
+      const newPairs = applyRegisterSet(entry, crdtLV, op.action.key, oldPairs, newVersion, op.action.val)
       crdt.registers.set(op.action.key, newPairs)
       break
     }
 
-    case 'setInsert': case 'setDelete': { // Sets!
-      if (crdt.type !== 'set') throw Error('Invalid operation type for target')
+    // case 'setInsert': case 'setDelete': { // Sets!
+    //   if (crdt.type !== 'set') throw Error('Invalid operation type for target')
 
-      // Set operations are comparatively much simpler, because insert
-      // operations cannot be concurrent and multiple overlapping delete
-      // operations are ignored.
-      if (op.action.type == 'setInsert') {
-        if (op.action.val.type === 'primitive') {
-          crdt.values.set(newVersion, op.action.val)
-        } else {
-          createCRDT(entry, newVersion, op.action.val.crdtKind)
-          crdt.values.set(newVersion, {type: "crdt", id: newVersion})
-        }
-        addIndex(entry.index, newVersion, crdtLV)
-      } else {
-        // Delete!
-        const target = causalGraph.rawToLV2(entry.cg, op.action.target)
-        let oldVal = crdt.values.get(target)
-        if (oldVal != null) {
-          removeRecursive(entry, oldVal)
-          crdt.values.delete(target)
-        }
-        // This would be fine if we have an operation log. Currently only a grow-only set.
-        throw Error('Deleting items from a set is currently broken due to index questions')
-      }
+    //   // Set operations are comparatively much simpler, because insert
+    //   // operations cannot be concurrent and multiple overlapping delete
+    //   // operations are ignored.
+    //   if (op.action.type == 'setInsert') {
+    //     if (op.action.val.type === 'primitive') {
+    //       crdt.values.set(newVersion, op.action.val)
+    //     } else {
+    //       createCRDT(entry, newVersion, op.action.val.crdtKind)
+    //       crdt.values.set(newVersion, {type: "crdt", id: newVersion})
+    //     }
+    //     addIndex(entry.index, {lv: newVersion, key: crdtLV, mapKey: null})
+    //   } else {
+    //     // Delete!
+    //     const target = causalGraph.rawToLV2(entry.cg, op.action.target)
+    //     let oldVal = crdt.values.get(target)
+    //     if (oldVal != null) {
+    //       removeRecursive(entry, oldVal)
+    //       crdt.values.delete(target)
+    //     }
+    //     // This would be fine if we have an operation log. Currently only a grow-only set.
+    //     throw Error('Deleting items from a set is currently broken due to index questions')
+    //   }
 
-      break
-    }
+    //   break
+    // }
 
     default: throw Error('Invalid action type')
   }
@@ -363,34 +410,40 @@ export function localMapInsert(entry: DbEntry, id: RawVersion, mapId: LV, key: s
 
 // *** Serialization ***
 
-type PSerializedRegisterValue = { type: 'primitive', val: Primitive }
-  | { type: 'crdt' | 'ref', v: RawVersion }
+// type PSerializedRegisterValue = { type: 'primitive', val: Primitive }
+//   | { type: 'crdt' | 'ref', v: RawVersion }
 
-type PSerializedMVRegister = { offset: LV, val: PSerializedRegisterValue }[]
+type PSerializedMVRegister = { offset: LV, val: CreateValue }[]
 
 type PSerializedCRDTInfo = {
-//   type: 'map',
-//   registers: [k: string, reg: PSerializedMVRegister][],
-// } | {
-//   type: 'set',
-//   values: [agent: string, seq: number, val: PSerializedRegisterValue][],
-// } | {
   type: 'register',
   value: PSerializedMVRegister,
+} | {
+  type: 'map',
+  registers: Map<MapKey, PSerializedMVRegister>,
+  // registers: {k: MapKey, reg: PSerializedMVRegister}[],
+// } | {
+//   type: 'set',
+//   values: [agent: string, seq: number, val: CreateValue][],
 }
 
-export interface PSerializedFancyDBv1 {
+export interface DbEntryDiff {
   cg: causalGraph.PartialSerializedCGV2,
   // crdts: {agent: string, seq: number, info: PSerializedCRDTInfo}[]
-  crdts: Map<RawVersion, PSerializedCRDTInfo>
+
+  // In LV order.
+  crdtDiffs: {v: RawVersion, diff: PSerializedCRDTInfo}[]
 }
 
-const serializePRegisterValue = (data: RegisterValue, cg: causalGraph.CausalGraph): PSerializedRegisterValue => {
-  if (data.type === 'crdt' || data.type === 'ref') {
-    const rv = causalGraph.lvToRaw(cg, data.id)
-    return {type: data.type, v: rv}
+const serializePRegisterValue = (entry: DbEntry, [lv, val]: Pair<RegisterValue>): CreateValue => {
+  if (val.type === 'crdt') {
+    // if (data.type === 'ref') throw Error('NYI')
+
+    const crdtKind = entry.crdts.get(lv)!.type
+    // const rv = causalGraph.lvToRaw(entry.cg, data.id)
+    return {type: 'crdt', crdtKind}
   } else {
-    return {type: 'primitive', val: data.val}
+    return val
   }
 }
 
@@ -399,27 +452,36 @@ const serializePRegisterValue = (data: RegisterValue, cg: causalGraph.CausalGrap
 //   return { agent: rv[0], seq: rv[1], val: serializePRegisterValue(val, cg) }
 // }
 
-export function serializePartialSince(entry: DbEntry, v: LV[]): PSerializedFancyDBv1 {
+const getOrDef = <K, V>(map: Map<K, V>, key: K, orDefault: () => V): V => {
+  let v = map.get(key)
+  if (v == null) {
+    v = orDefault()
+    map.set(key, v)
+  }
+  return v
+}
+
+export function serializePartialSince(entry: DbEntry, v: LV[]): DbEntryDiff {
   if (entry.storesHistory) throw Error('Serializing with history NYI')
 
   // We'll map it into the desired output format below.
-  const crdtDiffs = new Map<LV, PSerializedCRDTInfo>()
+  //
+  // And, output format must be in LV order. But maps are guaranteed to maintain their
+  // insertion order. Since we visit everything in order of the ranges, this should
+  // be ok.
+  const crdtDiffMap = new Map<LV, PSerializedCRDTInfo>()
 
   const ranges = causalGraph.diff(entry.cg, v, entry.cg.heads).bOnly
 
   let offset = 0
   for (const [start, end] of ranges) {
-    for (const {lv, key} of entriesBetween(entry.index, start, end)) {
+    for (const {lv, key, mapKey} of entriesBetween(entry.index, start, end)) {
       // local version (lv) modified the CRDT at (key).
 
-      // First, if lv represents an entire CRDT itself, that means the CRDT was created. And we know
+      // If lv represents an entire CRDT itself, that means the CRDT was created. And we know
       // that the remote peer doesn't have this CRDT at all. And its our first time visiting this
-      // created child CRDT. Just add a snapshot of the whole thing.
-      const missingCRDT = entry.crdts.get(lv)
-      if (missingCRDT != null) {
-        // Send this entire CRDT.
-        throw Error('TODO')
-      }
+      // created child CRDT. We could just create a snapshot of the whole thing, which would be
+      // more efficient but eh.
 
       // Otherwise the CRDT at `key` has been modified - probably with new entries. Find them.
       const info = entry.crdts.get(key)
@@ -427,111 +489,141 @@ export function serializePartialSince(entry: DbEntry, v: LV[]): PSerializedFancy
 
       switch (info.type) {
         case 'register': {
-          let diff = crdtDiffs.get(key)
-          if (diff == null) {
-            diff = {type: 'register', value: []}
-            crdtDiffs.set(key, diff)
-          }
+          const diff = getOrDef(crdtDiffMap, key, () => (<PSerializedCRDTInfo>{type: 'register', value: []}))
+          if (diff.type !== 'register') throw Error('Invalid diff type')
+
           const val = info.value.find(([k]) => k === lv)
           if (val == null) throw Error('Invariant failed: Missing register value, which shows up in the index')
           diff.value.push({
             offset: offset + lv - start,
-            val: serializePRegisterValue(val[1], entry.cg)
+            val: serializePRegisterValue(entry, val)
           })
           break
         }
         case 'map': {
-          
+          const diff = getOrDef(crdtDiffMap, key, () => (<PSerializedCRDTInfo>{type: 'map', registers: new Map}))
+          if (diff.type !== 'map') throw Error('Invalid diff type')
+          if (mapKey == null) throw Error('Invalid map entry in index - entry has null mapKey')
+
+          const reg = info.registers.get(mapKey)!
+          const val = reg.find(([k]) => k === lv)
+          if (val == null) throw Error('Invariant failed: Missing register value, which shows up in the index')
+
+          getOrDef(diff.registers, mapKey, () => ([])).push({
+            offset: offset + lv - start,
+            val: serializePRegisterValue(entry, val)
+          })
+
           break
         }
-        case 'set': throw Error('NYI')
+        // case 'set': throw Error('NYI')
       }
     }
 
     offset += end - start
   }
 
-
-
-
-  // const shouldIncludeV = (v: LV): boolean => (
-  //   // This could be implemented using a binary search, but given the sizes involved this is fine.
-  //   ranges.find(([start, end]) => (start <= v) && (v < end)) != null
-  // )
-
-  // const encodeMVRegister = (reg: MVRegister, includeAll: boolean): null | PSerializedMVRegister => {
-  //   // I'll do this in an imperative way because its called so much.
-  //   let result: null | PSerializedMVRegister = null
-  //   for (const [v, val] of reg) {
-  //     if (includeAll || shouldIncludeV(v)) {
-  //       result ??= []
-  //       result.push(serializePMVRegisterValue(v, val, entry.cg))
-  //     }
-  //   }
-  //   return result
-  // }
-
-  // // So this is SLOOOW for big documents. A better implementation would store
-  // // operations and do a whole thing sending partial operation logs.
-  // for (const [id, info] of entry.crdts.entries()) {
-  //   // If the CRDT was created recently, just include all of it.
-  //   const includeAll = shouldIncludeV(id)
-
-  //   let infoOut: PSerializedCRDTInfo | null = null
-  //   switch (info.type) {
-  //     case 'map': {
-  //       let result: null | [k: string, reg: PSerializedMVRegister][] = null
-  //       for (let k in info.registers) {
-  //         const v = info.registers[k]
-
-  //         const valHere = encodeMVRegister(v, includeAll)
-  //         // console.log('valHere', valHere)
-  //         if (valHere != null) {
-  //           result ??= []
-  //           result.push([k, valHere])
-  //         }
-  //       }
-  //       if (result != null) infoOut = ['map', result]
-  //       break
-  //     }
-  //     case 'register': {
-  //       const result = encodeMVRegister(info.value, includeAll)
-  //       if (result != null) infoOut = ['register', result]
-  //       // if (result != null) {
-  //         // const rv = causalGraph.lvToRaw(db.cg, id)
-  //         // crdts.push([rv[0], rv[1], ['register', result]])
-  //       // }
-
-  //       break
-  //     }
-
-  //     case 'set': {
-  //       // TODO: Weird - this looks almost identical to the register code!
-  //       let result: null | [agent: string, seq: number, val: PSerializedRegisterValue][] = null
-  //       for (const [k, val] of info.values.entries()) {
-  //         if (includeAll || shouldIncludeV(k)) {
-  //           result ??= []
-  //           result.push(serializePMVRegisterValue(k, val, entry.cg))
-  //         }
-  //       }
-  //       if (result != null) infoOut = ['set', result]
-  //       // if (result != null) {
-  //       //   const rv = causalGraph.lvToRaw(db.cg, id)
-  //       //   crdts.push([rv[0], rv[1], ['set', result]])
-  //       // }
-  //       break
-  //     }
-  //   }
-
-  //   if (infoOut != null) {
-  //     const rv = causalGraph.lvToRaw(entry.cg, id)
-  //     crdts.push([rv[0], rv[1], infoOut])
-  //   }
-  // }
-
+  const crdtDiffEntries = Array.from(crdtDiffMap.entries())
+  assertSortedCustom(crdtDiffEntries, e => e[0])
   return {
     cg: causalGraph.serializeFromVersion(entry.cg, v),
-    // Gross.
-    crdts: new Map(Array.from(crdtDiffs.entries()).map(([lv, diff]) => ([causalGraph.lvToRaw(entry.cg, lv), diff])))
+    // Gross. Should be correct though.
+    crdtDiffs: crdtDiffEntries.map(([lv, diff]) => ({v: causalGraph.lvToRaw(entry.cg, lv), diff})),
   }
 }
+
+export function mergePartialDiff(entry: DbEntry, delta: DbEntryDiff) {
+  const [start, end] = causalGraph.mergePartialVersions(entry.cg, delta.cg)
+  const cgDeltaEnh = causalGraph.enhanceCGDiff(delta.cg)
+
+  for (const {v: rv, diff} of delta.crdtDiffs) {
+    const crdtLv = causalGraph.rawToLV2(entry.cg, rv)
+
+    const crdt = entry.crdts.get(crdtLv)
+    if (crdt == null) throw Error('Diff modifies missing CRDT')
+
+    switch (diff.type) {
+      case 'register': {
+        if (crdt.type !== 'register') throw Error('Invalid CRDT type')
+        const newValues = diff.value.map(({offset, val}): Pair<CreateValue> => {
+          const lv = causalGraph.diffOffsetToMaybeLV(entry.cg, start, cgDeltaEnh, offset)
+          return [lv, val]
+        }).filter(([lv]) => lv >= 0) // Filter out updates we know about.
+
+        crdt.value = mergeRegisters(entry, crdtLv, null, crdt.value, newValues)
+        break
+      }
+      case 'map': {
+        if (crdt.type !== 'map') throw Error('Invalid CRDT type')
+        for (const [key, regDiff] of diff.registers) {
+          // TODO: Naughty copy+pasta! Bad! Fix!
+          const newValues = regDiff.map(({offset, val}): Pair<CreateValue> => {
+            const lv = causalGraph.diffOffsetToMaybeLV(entry.cg, start, cgDeltaEnh, offset)
+            return [lv, val]
+          }).filter(([lv]) => lv >= 0) // Filter out updates we know about.
+
+          const oldPairs = crdt.registers.get(key) ?? []
+          const newPairs = mergeRegisters(entry, crdtLv, key, oldPairs, newValues)
+          crdt.registers.set(key, newPairs)
+        }
+
+        break
+      }
+    }
+  }
+
+  // for (const {vOffset, key: keyRaw, val} of delta.ops) {
+  //   const lv = causalGraph.diffOffsetToMaybeLV(crdt.cg, start, cgDeltaEnh, vOffset)
+  //   if (lv < 0) continue // We already have this delta.
+
+  //   const key = causalGraph.rawToLV2(crdt.cg, keyRaw)
+
+  //   if (newPairs[key] == null) newPairs[key] = [[lv, val]]
+  //   else newPairs[key].push([lv, val])
+  // }
+
+}
+
+
+;(() => {
+
+  const console = new Console({
+    stdout: process.stdout,
+    stderr: process.stderr,
+    inspectOptions: {depth: null}
+  })
+
+  const entry = createEntry()
+  localMapInsert(entry, ['seph', 0], ROOT_LV, 'cool', {type: 'primitive', val: true})
+  // localMapInsert(entry, ['seph', 1], ROOT_LV, 'cool', {type: 'primitive', val: false})
+  // localMapInsert(entry, ['seph', 1], ROOT_LV, 'beans', {type: 'primitive', val: 123})
+  const [_op, k] = localMapInsert(entry, ['seph', 1], ROOT_LV, 'beans', {type: 'crdt', crdtKind: 'register'})
+  // localMapInsert(entry, ['seph', 2], k, 'beans', {type: 'crdt', crdtKind: 'register'})
+
+
+  let diff = serializePartialSince(entry, [])
+  const e2 = createEntry()
+  mergePartialDiff(e2, diff)
+
+  applyRemoteOp(entry, {
+    action: {
+      type: 'registerSet',
+      val: {type: 'primitive', val: 'cool'},
+    },
+    crdtId: causalGraph.lvToRaw(entry.cg, k),
+    id: ['seph', 2],
+    parents: [['seph', 1]],
+  })
+
+  diff = serializePartialSince(entry, [1])
+  console.log(diff)
+  // let diff =
+  mergePartialDiff(e2, diff)
+
+
+  console.log(entry)
+  // console.log(diff)
+
+  console.log(e2)
+
+})()

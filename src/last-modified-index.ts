@@ -17,14 +17,13 @@ import { assertSorted } from './utils.js'
  * times in the index - eg if a new CRDT is created in a DbEntry. In this
  * case the order of those entries in the index is undefined.
  */
-// export type LMIndex<Fields = {key: LV}> = (Fields & {lv: LV})[]
-export type LMIndex<Key = LV> = { lv: LV, key: Key }[]
+export type LMIndex<Fields = {key: LV}> = (Fields & {lv: LV})[]
 
-function rawLookup<K>(index: LMIndex<K>, v: LV): number {
+function rawLookup<F>(index: LMIndex<F>, v: LV): number {
   return bs(index, v, (entry, needle) => entry.lv - needle)
 }
 
-export function removeIndex<K>(index: LMIndex<K>, v: LV) {
+export function removeIndex<F>(index: LMIndex<F>, v: LV) {
   const idx = rawLookup(index, v)
   if (idx < 0) throw Error('Missing old version in index')
 
@@ -33,32 +32,30 @@ export function removeIndex<K>(index: LMIndex<K>, v: LV) {
   index.splice(idx, 1)
 }
 
-export function addIndex<K>(index: LMIndex<K>, lv: LV, key: K) {
-  const entry = {lv, key}
-
-  if (index.length == 0 || index[index.length - 1].lv < lv) {
+export function addIndex<F>(index: LMIndex<F>, entry: F & {lv: LV}) {
+  if (index.length == 0 || index[index.length - 1].lv < entry.lv) {
     // Normal, fast case.
     index.push(entry)
   } else {
-    const idx = rawLookup(index, lv)
+    const idx = rawLookup(index, entry.lv)
     if (idx >= 0) return // Already indexed.
     const insIdx = -idx - 1
     index.splice(insIdx, 0, entry)
   }
 }
 
-export function lookupIndex<K>(index: LMIndex<K>, v: LV): K | null {
+export function lookupIndex<F>(index: LMIndex<F>, v: LV): (F & {lv: LV}) | null {
   const result = rawLookup(index, v)
 
   return result < 0 ? null
-    : index[result].key
+    : index[result]
 }
 
 /**
  * Yield the entries ({lv, k}) since the specified time. They will be yielded in time order.
  * The keys will not be uniq'd.
  */
-export function *entriesBetween<K>(index: LMIndex<K>, start: LV, end: LV = -1): Iterable<LMIndex<K>[0]> {
+export function *entriesBetween<F>(index: LMIndex<F>, start: LV, end: LV = -1): Iterable<LMIndex<F>[0]> {
   let idx = rawLookup(index, start)
   if (idx < 0) idx = -idx - 1
 
@@ -68,16 +65,16 @@ export function *entriesBetween<K>(index: LMIndex<K>, start: LV, end: LV = -1): 
   }
 }
 
-/** Get a list of the keys which have been modified in the range of `[since..]` */
-export function modifiedKeysSince<K>(index: LMIndex<K>, since: LV): Set<K> {
-  const result = new Set<K>() // To uniq() the results.
-  for (const {key} of entriesBetween(index, since)) {
-    result.add(key)
-  }
-  return result
-}
+// /** Get a list of the keys which have been modified in the range of `[since..]` */
+// export function modifiedKeysSince<F>(index: LMIndex<F>, since: LV): Set<F> {
+//   const result = new Set<F>() // To uniq() the results.
+//   for (const {key} of entriesBetween(index, since)) {
+//     result.add(key)
+//   }
+//   return result
+// }
 
-export function checkIndex<K>(index: LMIndex<K>) {
+export function checkIndex<F>(index: LMIndex<F>) {
   // Make sure the index is sorted.
   assertSorted(index.map(e => e.lv))
 }

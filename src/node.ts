@@ -10,7 +10,7 @@ import { localNetSchema } from "./schema.js";
 import handle from "./message-stream.js";
 import { finished } from "node:stream";
 import startRepl from './repl.js'
-import { modifiedKeysSince } from "./last-modified-index.js";
+// import { modifiedKeysSince } from "./last-modified-index.js";
 
 
 const console = new Console({
@@ -180,8 +180,9 @@ const runProtocol = (sock: net.Socket, db: Db): Promise<void> => {
         state.unknownVersions = null
 
         if (updated[0] !== updated[1]) {
-          const keys = modifiedKeysSince(db.inbox.index, updated[0])
-          console.log('Modified inbox keys', keys)
+          // const keys = modifiedKeysSince(db.inbox.index, updated[0])
+          // console.log('Modified inbox keys', keys)
+          console.log('Modified inbox keys')
         }
 
         database.emitChangeEvent(db, 'local')
