@@ -134,6 +134,12 @@ const runProtocol = (sock: net.Socket, db: Db): Promise<void> => {
           unknownVersions.set(k, remainder)
         }
 
+        for (const [k, entry] of db.entries) {
+          if (msg.versions.has(k)) continue
+          // Entry doesn't appear in the remote's set at all. Add it to the deltas to send.
+          deltasToSend.set(k, serializePartialSince(entry, []))
+        }
+
         // We always send a deltas message, even if it has no changes so the other peer
         // knows they're up to date.
         write({ type: 'DocDeltas', deltas: deltasToSend })
@@ -157,7 +163,8 @@ const runProtocol = (sock: net.Socket, db: Db): Promise<void> => {
 
         const changed = new Set<[DocName, LV[]]>()
         for (const [k, delta] of msg.deltas) {
-          const oldHead = db.entries.get(k)!.cg.heads.slice()
+          const oldEntry = db.entries.get(k)
+          const oldHead = oldEntry ? oldEntry.cg.heads.slice() : []
           const [start, end] = database.mergeEntryDiff(db, k, delta)
 
           // Presumably the remote peer has just sent us all the data it has that we were
