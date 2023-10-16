@@ -5,14 +5,14 @@ import * as database from './db.js'
 import * as ss from './stateset.js'
 import * as net from 'node:net'
 
-import {Console} from 'node:console'
 import { localNetSchema } from "./schema.js";
 import handle from "./message-stream.js";
 import { finished } from "node:stream";
 import startRepl from './repl.js'
+import { entriesBetween } from "./last-modified-index.js";
 // import { modifiedKeysSince } from "./last-modified-index.js";
 
-
+import {Console} from 'node:console'
 const console = new Console({
   stdout: process.stdout,
   stderr: process.stderr,
@@ -180,9 +180,9 @@ const runProtocol = (sock: net.Socket, db: Db): Promise<void> => {
         state.unknownVersions = null
 
         if (updated[0] !== updated[1]) {
-          // const keys = modifiedKeysSince(db.inbox.index, updated[0])
-          // console.log('Modified inbox keys', keys)
-          console.log('Modified inbox keys')
+          for (const {key} of entriesBetween(db.inbox.index, updated[0], updated[1])) {
+            console.log('Modified inbox key', key)
+          }
         }
 
         database.emitChangeEvent(db, 'local')

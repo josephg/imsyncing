@@ -185,19 +185,19 @@ const versionCmp = ([a1, s1]: RawVersion, [a2, s2]: RawVersion) => (
     : s1 - s2
 )
 
-export const tieBreakVersions = (cg: CausalGraph, data: LV[]): LV => {
-  if (data.length === 0) throw Error('Cannot tie break from an empty set')
-  let winner = data.reduce((a, b) => {
-    // Its a bit inefficient doing this lookup multiple times for the winning item,
-    // but eh. The data set will almost always contain exactly 1 item anyway.
-    const rawA = lvToRaw(cg, a)
-    const rawB = lvToRaw(cg, b)
+// export const tieBreakVersions = (cg: CausalGraph, data: LV[]): LV => {
+//   if (data.length === 0) throw Error('Cannot tie break from an empty set')
+//   let winner = data.reduce((a, b) => {
+//     // Its a bit inefficient doing this lookup multiple times for the winning item,
+//     // but eh. The data set will almost always contain exactly 1 item anyway.
+//     const rawA = lvToRaw(cg, a)
+//     const rawB = lvToRaw(cg, b)
 
-    return versionCmp(rawA, rawB) < 0 ? a : b
-  })
+//     return versionCmp(rawA, rawB) < 0 ? a : b
+//   })
 
-  return winner
-}
+//   return winner
+// }
 
 // Its gross that I want / need this, but its super convenient.
 export const tieBreakPairs = <T>(cg: CausalGraph, data: Pair<T>[]): Pair<T> => {

@@ -46,7 +46,12 @@ export default function startRepl(db: Db) {
     r.context.getAll = () => {
       return db.inbox.values
     }
-  
+
+    // Insert a new item.
+    // r.context.i = (rootData: data: Primitive) => {
+
+    // }
+
     r.once('exit', () => {
       process.exit(0)
     })

@@ -195,3 +195,11 @@ export interface Db {
   listeners: Set<(from: 'local' | 'remote') => void>
 }
 
+export interface InboxFields {
+  type: string,
+  // Usually just 1 version, but might be multiple versions if the document
+  // has been concurrently edited.
+  //
+  // Also we might not have the version named by heads.
+  heads: RawVersion[],
+}
