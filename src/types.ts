@@ -1,11 +1,11 @@
 // import { type } from "os"
 
 // import { PartialSerializedCGV2 } from "./causal-graph.js"
-import * as causalGraph from "./causal-graph.js"
-import { LMIndex } from "./last-modified-index.js"
-import * as ss from "./stateset.js"
-import {SSDelta} from './stateset.js'
-import { AgentVersion } from "./utils.js"
+import type * as causalGraph from "./causal-graph.js"
+import type { DbEntryDiff } from "./db-entry.js"
+import type { LMIndex } from "./last-modified-index.js"
+// import * as ss from "./stateset.js"
+import type { AgentVersion } from "./utils.js"
 
 export type RawVersion = [agent: string, seq: number]
 
@@ -56,13 +56,13 @@ export type MVRegister = Pair<RegisterValue>[]
 // export type MVRegister = AtLeast1<Pair<RegisterValue>>
 
 
-export type CRDTMapInfo = { type: 'map', registers: Map<MapKey, MVRegister> }
+export type CRDTRegisterValue = { type: 'register', value: MVRegister }
+export type CRDTMapValue = { type: 'map', registers: Map<MapKey, MVRegister> }
 /** When there's no history, sets have deleted values removed perminantly. */
-export type CRDTSetInfo = { type: 'set', values: Map<LV, RegisterValue> }
-export type CRDTRegisterInfo = { type: 'register', value: MVRegister }
+export type CRDTSetValue = { type: 'set', values: Map<LV, RegisterValue> }
 
 // export type CRDTInfo = CRDTMapInfo | CRDTSetInfo | CRDTRegisterInfo
-export type CRDTInfo = CRDTMapInfo | CRDTRegisterInfo
+export type CRDTValue = CRDTRegisterValue | CRDTMapValue
 
 
 // *** Operations. This is for ops on a DbEntry. ***
@@ -103,14 +103,37 @@ export interface Op {
 
 export type SyncConfig = 'all' | 'none' // .. or only one value, or one type, ...
 
+export type DocName = string // Might replace this with a UUID at some point.
+
 // Network messages
 export type NetMsg = {
   type: 'Hello',
-  inboxVersion: VersionSummary,
+  /**
+   * The currently known version for every document.
+   *
+   * I'd like to optimize this - and find a way to avoid sending the VersionSummary
+   * for documents which haven't changed in awhile.
+   *
+   * The right way to solve that is with something like a tree of hashes sorted by
+   * date, and then we can optimistically only send a subset of those hashes on
+   * connect. That would let us trade off bandwidth & RTT against each other.
+   *
+   * This current approach uses a linear amount of network traffic & CPU based on the
+   * total number of stored documents. Thats fine for now.
+   *
+   * This network protocol approach also sends the set of all document versions
+   * to all peers, including peers which only need / want to know about 1 document.
+   * Changing that would add 1 more RTT, but reduce the size of the first packets.
+   * ... Something to think about later.
+   */
+  versions: Map<DocName, VersionSummary>,
+  // inboxVersion: VersionSummary,
   sync: SyncConfig,
 } | {
-  type: 'InboxDelta',
-  delta: SSDelta,
+  type: 'DocDeltas',
+  // delta: SSDelta,
+  deltas: Map<DocName, DbEntryDiff>,
+
 // } | {
   // type: 'Delta',
   // cg: PartialSerializedCGV2
@@ -141,15 +164,9 @@ export type NetMsg = {
  */
 
 export interface DbEntry {
-  crdts: Map<LV, CRDTInfo>,
+  crdts: Map<LV, CRDTValue>,
   cg: causalGraph.CausalGraph,
 
-  /**
-   * The index is currently just showing recently modified CRDTs on the whole.
-   * This means if you have a big map with 1 frequently modified key, we'll be
-   * scanning the map a lot to find what is getting changed. The alternative is to
-   * make a bigger index which stores the keys as well. Not sure whats better here!
-   */
   index: LMIndex<{key: LV, mapKey: MapKey | null}>,
 
   /** Entries can either store their history or not. This is for now a global
@@ -180,19 +197,36 @@ export interface DbEntry {
    */
   branch: LV[]
 
-  // TODO: Should we create a local user agent here?
+  // We're going to use the same agent ID across all documents to reduce network
+  // traffic. But each document will have its own sequence of (agent, ID) pairs.
+  nextSeq: number,
+
+  // This is the application schema type of the DbEntry. Think of this like a mime-type
+  // for documents. Eg, "post".
+  appType: string,
 }
 
 export interface Db {
-  inbox: ss.StateSet // Includes its own causal graph.
-  entries: Map<LV, DbEntry>
+  // inbox: ss.StateSet // Includes its own causal graph.
 
-  agent: AgentVersion
+  /**
+   * The set of DB entries, mapped by the entry's ID.
+   */
+  entries: Map<DocName, DbEntry>
+
+  // agent: AgentVersion
+  agent: string,
 
   syncConfig: SyncConfig
 
-  // TODO: Separate listeners on the index from listeners on a db entry.
-  listeners: Set<(from: 'local' | 'remote') => void>
+  // listeners: Set<(from: 'local' | 'remote', docName: DocName, firstLV: LV) => void>
+
+  // TODO: This function signature is a mess.
+  listeners: Set<(
+    from: 'local' | 'remote',
+    changed: Set<[docName: DocName, oldHeads: LV[]]>,
+    deltas: Map<DocName, DbEntryDiff>
+  ) => void>,
 }
 
 export interface InboxFields {

@@ -1,9 +1,10 @@
 import * as sb from 'schemaboi'
-import { LV, NetMsg, Primitive, RawVersion } from "./types.js";
+import { Pair, DbEntry, LV, NetMsg, Primitive, RawVersion, RegisterValue } from "./types.js";
 import * as cg from './causal-graph.js';
 import EventEmitter from 'events';
 import { Db } from "./types.js";
 import * as ss from './stateset.js';
+import { hydrateIndex } from './db-entry.js';
 
 const LV = sb.prim('u64')
 
@@ -54,20 +55,61 @@ export const appDbSchema: sb.AppSchema = {
   types: {
     Db: {
       fields: {
-        // cg: sb.ref('CausalGraph'),
-        // branch: sb.list(LV),
-        // ops: sb.map(LV, 'Op', 'map'),
-
-        inbox: sb.ref('StateSet'),
-        entries: sb.map(LV, LV, 'map'), // Not yet used.
-        agent: sb.ref('RawVersion'),
+        entries: sb.map(sb.Id, sb.ref('DbEntry'), 'map'), // Not yet used.
+        agent: sb.Id,
         syncConfig: sb.ref('SyncConfig'),
         listeners: {
           type: 'ref', key: 'notused',
           skip: true,
           defaultValue: () => new Set(),
         }
+      },
+
+      decode(db) {
+        for (const entry of db.entries.values()) {
+          entry.nextSeq = cg.nextSeqForAgent(entry.cg, db.agent)
+        }
+        return db
       }
+    },
+
+    DbEntry: {
+      fields: {
+        // Using a s64 here because ROOT encodes as -1. Could instead +1 / -1 the CRDT keys.
+        crdts: {
+          ...sb.map(LV, sb.ref('CRDTValue'), 'map'),
+          encodeEntry(e) {
+            e[0] += 1
+            return e
+          },
+          decodeEntry(e) {
+            e[0] -= 1
+            return e
+          },
+        },
+        cg: sb.ref('CausalGraph'),
+        index: {
+          type: LV.type,
+          skip: true,
+          defaultValue: () => ([]),
+        },
+        storesHistory: sb.Bool,
+        branch: sb.list(LV),
+        nextSeq: {type: LV.type, skip: true},
+        appType: sb.Id,
+      },
+      decode(entry) {
+        hydrateIndex(entry as DbEntry)
+        return entry
+      },
+    },
+
+    CRDTValue: {
+      type: 'enum',
+      variants: {
+        register: { fields: { value: sb.list(sb.ref('RegisterValuePair')) } },
+        map: { fields: { registers: sb.map(sb.ref('MapKey'), sb.list(sb.ref('RegisterValuePair')), 'map') } },
+      },
     },
 
     SyncConfig: {
@@ -79,10 +121,7 @@ export const appDbSchema: sb.AppSchema = {
 
     RawVersion: {
       // exhaustive: true,
-      fields: {
-        id: sb.prim('id'),
-        seq: LV,
-      },
+      fields: { id: sb.Id, seq: LV },
       encode(v: RawVersion) {
         return { id: v[0], seq: v[1] }
       },
@@ -91,17 +130,17 @@ export const appDbSchema: sb.AppSchema = {
       },
     },
 
-    Op: {
-      type: 'enum',
-      exhaustive: false,
-      variants: {
-        set: {
-          fields: { val: sb.ref('AnyType') }
-        }
-      }
-    },
+    // Op: {
+    //   type: 'enum',
+    //   exhaustive: false,
+    //   variants: {
+    //     set: {
+    //       fields: { val: sb.ref('Primitive') }
+    //     }
+    //   }
+    // },
 
-    AnyType: {
+    Primitive: {
       type: 'enum',
       exhaustive: false,
       encode: encodePrim,
@@ -110,49 +149,83 @@ export const appDbSchema: sb.AppSchema = {
         null: null,
         true: null,
         false: null,
-        string: {fields: {val: 'string'}},
+        string: {fields: {val: sb.String}},
         int: {fields: {val: 's64'}},
         float: {fields: {val: 'f64'}},
-        object: {fields: {val: sb.map('string', 'AnyType', 'object')}},
-        list: {fields: {val: sb.list('AnyType')}},
+        list: {fields: {val: sb.list('Primitive')}},
+        object: {fields: {val: sb.map(sb.String, 'Primitive', 'object')}},
+        // TODO: Or a reference to another nearby CRDT.
       }
     },
 
+    RegisterValue: {
+      type: 'enum',
+      variants: {
+        primitive: {fields: {val: sb.ref('Primitive')}},
+        crdt: null,
+      }
+    },
+
+    RegisterValuePair: {
+      fields: {
+        lv: LV,
+        val: sb.ref('RegisterValue')
+      },
+      encode(pair: Pair<RegisterValue>) {
+        return {lv: pair[0], val: pair[1]}
+      },
+      decode(obj) {
+        return [obj.lv, obj.val]
+      },
+    },
+
+    MapKey: {
+      type: 'enum',
+      exhaustive: false,
+      encode: encodePrim,
+      decode: decodePrim,
+      variants: {
+        true: null,
+        false: null,
+        string: {fields: {val: sb.String}}, // Or ID?
+        int: {fields: {val: 's64'}},
+      }
+    },
 
     CGEntry: {
       fields: {
         version: LV,
         vEnd: LV,
 
-        agent: sb.prim('id'),
+        agent: sb.Id,
         seq: LV, // seq for version.
 
         parents: sb.list(LV) // parents for version.
       }
     },
 
-    SSPair: {
-      fields: {
-        lv: LV,
-        val: sb.ref('AnyType'),
-      },
-      encode(pair: [LV, Primitive]) {
-        return { lv: pair[0], val: pair[1] }
-      },
-      decode(pair: any): RawVersion { // {id: string, seq: number}
-        return [pair.lv, pair.val]
-      },
-    },
+    // SSPair: {
+    //   fields: {
+    //     lv: LV,
+    //     val: sb.ref('Primitive'),
+    //   },
+    //   encode(pair: [LV, Primitive]) {
+    //     return { lv: pair[0], val: pair[1] }
+    //   },
+    //   decode(pair: any): RawVersion { // {id: string, seq: number}
+    //     return [pair.lv, pair.val]
+    //   },
+    // },
 
-    StateSet: {
-      fields: {
-        values: sb.map(LV, sb.list(sb.ref('SSPair')), 'map'),
-        cg: sb.ref('CausalGraph')
-      },
-      decode({values, cg}: any): ss.StateSet {
-        return ss.hydrate(values, cg)
-      }
-    },
+    // StateSet: {
+    //   fields: {
+    //     values: sb.map(LV, sb.list(sb.ref('SSPair')), 'map'),
+    //     cg: sb.ref('CausalGraph')
+    //   },
+    //   decode({values, cg}: any): ss.StateSet {
+    //     return ss.hydrate(values, cg)
+    //   }
+    // },
 
     CausalGraph: {
       fields: {
@@ -171,15 +244,18 @@ export const appDbSchema: sb.AppSchema = {
   }
 }
 
+const versionSummarySchema = sb.map(sb.Id, sb.list('SeqRange'), 'object')
 
 export const appNetSchema: sb.AppSchema = {
   id: 'SimplestSyncNet',
   root: sb.ref('NetMessage'),
   types: {
     RawVersion: appDbSchema.types.RawVersion,
-    Op: appDbSchema.types.Op,
-    AnyType: appDbSchema.types.AnyType,
+    // Op: appDbSchema.types.Op,
+    Primitive: appDbSchema.types.Primitive,
     SyncConfig: appDbSchema.types.SyncConfig,
+    RegisterValue: appDbSchema.types.RegisterValue,
+    MapKey: appDbSchema.types.MapKey,
 
     // VersionSummary: {
 
@@ -194,26 +270,60 @@ export const appNetSchema: sb.AppSchema = {
 
     PartialSerializedCGEntry: {
       fields: {
-        agent: sb.prim('id'),
+        agent: sb.Id,
         seq: LV,
         len: LV,
         parents: sb.list('RawVersion')
       }
     },
 
-    SSDeltaOp: {
-      fields: {
-        vOffset: LV,
-        key: sb.ref('RawVersion'),
-        val: sb.ref('AnyType'),
+    CreateValue: {
+      type: 'enum',
+      variants: {
+        primitive: { fields: { val: sb.ref('Primitive') } },
+
+        // Or create a register, map or set.
+        register: null,
+        map: null,
+        // set: null,
       }
     },
 
-    SSDelta: {
+    MVRegisterSet: {
       fields: {
-        cg: sb.list('PartialSerializedCGEntry'),
-        ops: sb.list('SSDeltaOp'),
+        offset: LV,
+        val: sb.ref('CreateValue')
       }
+    },
+
+    CRDTDiff: {
+      type: 'enum',
+      variants: {
+        register: { fields: {
+          set: sb.list(sb.ref('MVRegisterSet'))
+        }},
+        map: { fields: {
+          registers: sb.map(sb.ref('MapKey'), sb.list(sb.ref('MVRegisterSet')), 'map'),
+        }},
+      },
+    },
+
+    CRDTDiffPair: {
+      fields: {
+        v: sb.ref('RawVersion'),
+        diff: sb.ref('CRDTDiff'),
+      }
+    },
+
+    DbEntryDiff: {
+      fields: {
+        appType: sb.Id,
+        cg: sb.list('PartialSerializedCGEntry'),
+        // TODO: Could represent this as a map? Its sorted, but I don't want to
+        // rely on the map sort order through SB.
+        crdtDiffs: sb.list(sb.ref('CRDTDiffPair'))
+      }
+
     },
 
     NetMessage: {
@@ -221,18 +331,25 @@ export const appNetSchema: sb.AppSchema = {
       variants: {
         Hello: {
           fields: {
-            inboxVersion: sb.map('string', sb.list('SeqRange')),
+            // Versions is a map of
+            versions: sb.map(sb.Id, versionSummarySchema, 'map'),
             sync: sb.ref('SyncConfig'),
           }
         },
 
-        InboxDelta: {
+        DocDeltas: {
           fields: {
-            delta: sb.ref('SSDelta'),
-            // cg: sb.list('PartialSerializedCGEntry'),
-            // ops: sb.map(LV, 'Op', 'map'),
+            deltas: sb.map(sb.Id, sb.ref('DbEntryDiff'), 'map'),
           }
         }
+
+        // InboxDelta: {
+        //   fields: {
+        //     delta: sb.ref('SSDelta'),
+        //     // cg: sb.list('PartialSerializedCGEntry'),
+        //     // ops: sb.map(LV, 'Op', 'map'),
+        //   }
+        // }
       }
     }
   }

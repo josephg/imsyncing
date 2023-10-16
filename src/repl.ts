@@ -1,8 +1,7 @@
 import repl from 'node:repl'
 import * as dbLib from './db.js'
 import * as causalGraph from './causal-graph.js'
-import * as ss from './stateset.js'
-import { Db, LV, Primitive, RawVersion } from './types.js'
+import { Db, DocName, LV, Primitive, RawVersion } from './types.js'
 import { nextVersion } from './utils.js'
 
 // ***** REPL
@@ -19,33 +18,50 @@ export default function startRepl(db: Db) {
   
     r.context.db = db
     r.context.cg = causalGraph
-  
-    r.context.insert = (val: Primitive) => {
-      // db.inbox
-      const key = ss.localInsert(db.inbox, nextVersion(db.agent), val)
-      dbLib.emitChangeEvent(db, 'local')
-      return key
+
+    r.context.newDoc = (appType: string = 'post', val?: Record<string, Primitive>): DocName => {
+      return dbLib.insertNewEntry(db, appType, val)
     }
-  
+
+    r.context.set = (k: DocName, val: Record<string, Primitive>) => {
+      dbLib.localSet(db, k, val)
+    }
+
+    r.context.get = (k: DocName) => {
+      // TODO: Nice JSON wrapper.
+      return db.entries.get(k)
+    }
+
+    r.context.getAll = () => {
+      return db.entries
+    }
+
+    // r.context.insert = (val: Primitive) => {
+    //   // db.inbox
+    //   const key = ss.localInsert(db.inbox, nextVersion(db.agent), val)
+    //   dbLib.emitChangeEvent(db, 'local')
+    //   return key
+    // }
+
     // r.context.set = (val: Primitive) => {
     //   dbLib.set(db, val)
     // }
-  
+
     // r.context.get1 = () => {
     //   return dbLib.getVal(db)
     // }
-    r.context.get = (key: LV | RawVersion) => {
-      if (Array.isArray(key)) {
-        key = causalGraph.rawToLV2(db.inbox.cg, key)
-      }
-      // return dbLib.getAllVals(db)
+    // r.context.get = (key: LV | RawVersion) => {
+    //   if (Array.isArray(key)) {
+    //     key = causalGraph.rawToLV2(db.inbox.cg, key)
+    //   }
+    //   // return dbLib.getAllVals(db)
+
+    //   return ss.get(db.inbox, key)
+    // }
   
-      return ss.get(db.inbox, key)
-    }
-  
-    r.context.getAll = () => {
-      return db.inbox.values
-    }
+    // r.context.getAll = () => {
+    //   return db.inbox.values
+    // }
 
     // Insert a new item.
     // r.context.i = (rootData: data: Primitive) => {

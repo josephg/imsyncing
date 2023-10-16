@@ -1,17 +1,17 @@
 // This file contains methods & tools to interact with database entries.
 // This code was stolen & modified from the DbEntry code in replca's JS implementation.
 
-import { CRDTInfo, CRDTMapInfo, MapKey, CreateValue, DbEntry, LV, MVRegister, Op, Pair, Primitive, ROOT_LV, RawVersion, RegisterValue } from "./types.js"
+import { CRDTValue, CRDTMapValue, MapKey, CreateValue, DbEntry, LV, MVRegister, Op, Pair, Primitive, ROOT_LV, RawVersion, RegisterValue, LVRange } from "./types.js"
 import * as causalGraph from './causal-graph.js'
-import { AgentVersion, assertSorted, assertSortedCustom, errExpr, nextVersion } from "./utils.js"
+import { AgentVersion, assertSorted, assertSortedCustom, errExpr } from "./utils.js"
 import { addIndex, entriesBetween, removeIndex } from "./last-modified-index.js"
 import { Console } from "node:console"
 
-const createEntry = (storesHistory: boolean = false): DbEntry => {
+export const createDbEntry = (appType: string, storesHistory: boolean = false): DbEntry => {
   if (storesHistory) throw Error('Storing history is NYI.')
 
   return {
-    crdts: new Map<LV, CRDTInfo>([
+    crdts: new Map<LV, CRDTValue>([
       // CRDTs start with a root CRDT object entry.
       [ ROOT_LV, { type: 'map', registers: new Map() } ]
     ]),
@@ -19,8 +19,36 @@ const createEntry = (storesHistory: boolean = false): DbEntry => {
     index: [],
     storesHistory,
     branch: [],
+    nextSeq: 0,
+    appType,
   }
 }
+
+export function hydrateIndex(entry: DbEntry) {
+  entry.index.length = 0
+
+  for (const [key, info] of entry.crdts) {
+    switch (info.type) {
+      case 'register': {
+        for (const [lv, _] of info.value) {
+          entry.index.push({lv, key, mapKey: null})
+        }
+        break
+      }
+      case 'map': {
+        for (const [mapKey, reg] of info.registers) {
+          for (const [lv, _] of reg) {
+            entry.index.push({lv, key, mapKey})
+          }
+        }
+        break
+      }
+    }
+  }
+  entry.index.sort((a, b) => a.lv - b.lv)
+}
+
+const nextVersion = (entry: DbEntry, agent: string): RawVersion => ([agent, entry.nextSeq++])
 
 function removeRecursive(entry: DbEntry, [lv, val]: Pair<RegisterValue>) {
   if (val.type !== 'crdt') return
@@ -60,7 +88,7 @@ function createCRDT(entry: DbEntry, id: LV, type: 'map' | 'set' | 'register' | '
     throw Error('CRDT already exists !?')
   }
 
-  const crdtInfo: CRDTInfo = type === 'map' ? {
+  const crdtInfo: CRDTValue = type === 'map' ? {
     type: "map",
     registers: new Map,
   } : type === 'register' ? {
@@ -80,7 +108,7 @@ function createCRDT(entry: DbEntry, id: LV, type: 'map' | 'set' | 'register' | '
   addIndex(entry.index, {lv: id, key: id, mapKey: null})
 }
 
-const getMap = (entry: DbEntry, mapId: LV): CRDTMapInfo => {
+const getMap = (entry: DbEntry, mapId: LV): CRDTMapValue => {
   const crdt = entry.crdts.get(mapId)
   if (crdt == null || crdt.type !== 'map') throw Error('Invalid CRDT')
   return crdt
@@ -314,7 +342,7 @@ export function applyRemoteOp(entry: DbEntry, op: Op): LV {
   return newVersion
 }
 
-export function localMapInsert(entry: DbEntry, id: RawVersion, mapId: LV, key: MapKey, val: CreateValue): [Op, LV] {
+export function localMapInsert(entry: DbEntry, agent: string, mapId: LV, key: MapKey, val: CreateValue): [Op, LV] {
   // const crdt = getMap(entry, mapId)
 
   const crdtId = causalGraph.lvToRaw(entry.cg, mapId)
@@ -322,7 +350,7 @@ export function localMapInsert(entry: DbEntry, id: RawVersion, mapId: LV, key: M
   // const localParentsLV = (crdt.registers.get(key) ?? []).map(([version]) => version)
   // const localParents = causalGraph.lvToRawList(entry.cg, localParentsLV)
   const op: Op = {
-    id,
+    id: nextVersion(entry, agent),
     crdtId,
     parents: causalGraph.lvToRawList(entry.cg, entry.cg.heads),
     // action: { type: 'map', localParents, key, val }
@@ -335,7 +363,7 @@ export function localMapInsert(entry: DbEntry, id: RawVersion, mapId: LV, key: M
 }
 
 /** Recursively set / insert values into the map to make the map resemble the input */
-export function recursivelySetMap(entry: DbEntry, localAgent: AgentVersion, mapId: LV, val: Record<string, Primitive>) {
+export function recursivelySetMap(entry: DbEntry, agent: string, mapId: LV, val: Record<string, Primitive>) {
   // The root value already exists. Recursively insert / replace child items.
   const crdt = getMap(entry, mapId)
 
@@ -346,7 +374,7 @@ export function recursivelySetMap(entry: DbEntry, localAgent: AgentVersion, mapI
       // Set primitive into register.
       // This is a bit inefficient - it re-queries the CRDT and whatnot.
       // console.log('localMapInsert', v)
-      localMapInsert(entry, nextVersion(localAgent), mapId, k, {type: 'primitive', val: v})
+      localMapInsert(entry, agent, mapId, k, {type: 'primitive', val: v})
     } else {
       if (Array.isArray(v)) throw Error('Arrays not supported') // Could just move this up for now.
 
@@ -356,7 +384,7 @@ export function recursivelySetMap(entry: DbEntry, localAgent: AgentVersion, mapI
       // Force the inner item to become a map. Rawr.
       let innerMapId
       const setToMap = () => (
-        localMapInsert(entry, nextVersion(localAgent), mapId, k, {type: "crdt", crdtKind: 'map'})[1]
+        localMapInsert(entry, agent, mapId, k, {type: "crdt", crdtKind: 'map'})[1]
       )
 
       if (inner == null) innerMapId = setToMap()
@@ -376,15 +404,15 @@ export function recursivelySetMap(entry: DbEntry, localAgent: AgentVersion, mapI
       }
 
       // console.log('recursivelySetMap', innerMapId, v)
-      recursivelySetMap(entry, localAgent, innerMapId, v)
+      recursivelySetMap(entry, agent, innerMapId, v)
     }
   }
 }
 
-// export function recursivelySetRoot(entry: DbEntry, agent: AgentVersion, val: Record<string, Primitive>) {
-//   // The root value already exists. Recursively insert / replace child items.
-//   recursivelySetMap(db, agent, ROOT_LV, val)
-// }
+export function recursivelySetRoot(entry: DbEntry, agent: string, val: Record<string, Primitive>) {
+  // The root value already exists. Recursively insert / replace child items.
+  recursivelySetMap(entry, agent, ROOT_LV, val)
+}
 
 
 
@@ -414,14 +442,14 @@ export function recursivelySetMap(entry: DbEntry, localAgent: AgentVersion, mapI
 // type PSerializedRegisterValue = { type: 'primitive', val: Primitive }
 //   | { type: 'crdt' | 'ref', v: RawVersion }
 
-type PSerializedMVRegister = { offset: LV, val: CreateValue }[]
+type MVRegisterSet = { offset: LV, val: CreateValue }[]
 
-type PSerializedCRDTInfo = {
+type CRDTDiff = {
   type: 'register',
-  value: PSerializedMVRegister,
+  value: MVRegisterSet,
 } | {
   type: 'map',
-  registers: Map<MapKey, PSerializedMVRegister>,
+  registers: Map<MapKey, MVRegisterSet>,
   // registers: {k: MapKey, reg: PSerializedMVRegister}[],
 // } | {
 //   type: 'set',
@@ -429,11 +457,17 @@ type PSerializedCRDTInfo = {
 }
 
 export interface DbEntryDiff {
+  // This doesn't need to be sent with each diff, but eh. Could make it optional,
+  // but since I'll use SB's Id type, it actually takes up less bytes to make it a
+  // required field.
+  appType: string,
+
   cg: causalGraph.PartialSerializedCGV2,
   // crdts: {agent: string, seq: number, info: PSerializedCRDTInfo}[]
 
-  // In LV order.
-  crdtDiffs: {v: RawVersion, diff: PSerializedCRDTInfo}[]
+  // In LV order. Using raw versions because many of these CRDT names
+  // will predate the cg diff.
+  crdtDiffs: {v: RawVersion, diff: CRDTDiff}[]
 }
 
 const serializePRegisterValue = (entry: DbEntry, [lv, val]: Pair<RegisterValue>): CreateValue => {
@@ -470,7 +504,7 @@ export function serializePartialSince(entry: DbEntry, v: LV[]): DbEntryDiff {
   // And, output format must be in LV order. But maps are guaranteed to maintain their
   // insertion order. Since we visit everything in order of the ranges, this should
   // be ok.
-  const crdtDiffMap = new Map<LV, PSerializedCRDTInfo>()
+  const crdtDiffMap = new Map<LV, CRDTDiff>()
 
   const ranges = causalGraph.diff(entry.cg, v, entry.cg.heads).bOnly
 
@@ -490,7 +524,7 @@ export function serializePartialSince(entry: DbEntry, v: LV[]): DbEntryDiff {
 
       switch (info.type) {
         case 'register': {
-          const diff = getOrDef(crdtDiffMap, key, () => (<PSerializedCRDTInfo>{type: 'register', value: []}))
+          const diff = getOrDef(crdtDiffMap, key, () => (<CRDTDiff>{type: 'register', value: []}))
           if (diff.type !== 'register') throw Error('Invalid diff type')
 
           const val = info.value.find(([k]) => k === lv)
@@ -502,7 +536,7 @@ export function serializePartialSince(entry: DbEntry, v: LV[]): DbEntryDiff {
           break
         }
         case 'map': {
-          const diff = getOrDef(crdtDiffMap, key, () => (<PSerializedCRDTInfo>{type: 'map', registers: new Map}))
+          const diff = getOrDef(crdtDiffMap, key, () => (<CRDTDiff>{type: 'map', registers: new Map}))
           if (diff.type !== 'map') throw Error('Invalid diff type')
           if (mapKey == null) throw Error('Invalid map entry in index - entry has null mapKey')
 
@@ -527,14 +561,19 @@ export function serializePartialSince(entry: DbEntry, v: LV[]): DbEntryDiff {
   const crdtDiffEntries = Array.from(crdtDiffMap.entries())
   assertSortedCustom(crdtDiffEntries, e => e[0])
   return {
+    appType: entry.appType,
     cg: causalGraph.serializeFromVersion(entry.cg, v),
     // Gross. Should be correct though.
-    crdtDiffs: crdtDiffEntries.map(([lv, diff]) => ({v: causalGraph.lvToRaw(entry.cg, lv), diff})),
+    crdtDiffs: crdtDiffEntries.map(([lv, diff]) => ({
+      v: causalGraph.lvToRaw(entry.cg, lv),
+      diff
+    })),
   }
 }
 
-export function mergePartialDiff(entry: DbEntry, delta: DbEntryDiff) {
-  const [start, end] = causalGraph.mergePartialVersions(entry.cg, delta.cg)
+export function mergePartialDiff(entry: DbEntry, delta: DbEntryDiff): LVRange {
+  const range = causalGraph.mergePartialVersions(entry.cg, delta.cg)
+  const start = range[0]
   const cgDeltaEnh = causalGraph.enhanceCGDiff(delta.cg)
 
   for (const {v: rv, diff} of delta.crdtDiffs) {
@@ -583,6 +622,7 @@ export function mergePartialDiff(entry: DbEntry, delta: DbEntryDiff) {
   //   else newPairs[key].push([lv, val])
   // }
 
+  return range
 }
 
 

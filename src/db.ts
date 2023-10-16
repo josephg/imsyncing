@@ -1,14 +1,16 @@
-import { createAgent, rateLimit } from "./utils.js";
+import { createRandomId, rateLimit } from "./utils.js";
 import * as sb from 'schemaboi'
 import {localDbSchema} from './schema.js'
 import * as fs from 'node:fs'
-import * as ss from "./stateset.js"
-import { Db } from "./types.js";
+// import * as ss from "./stateset.js"
+import { Db, DocName, LV, LVRange, Primitive, ROOT_LV, VersionSummary } from "./types.js"
+import * as causalGraph from "./causal-graph.js"
+import { DbEntryDiff, createDbEntry, mergePartialDiff, recursivelySetMap, recursivelySetRoot, serializePartialSince } from "./db-entry.js";
 
 export const createDb = (): Db => ({
-  inbox: ss.create(),
+  // inbox: ss.create(),
   entries: new Map(),
-  agent: createAgent(),
+  agent: createRandomId(),
   syncConfig: 'all',
   listeners: new Set(),
 })
@@ -42,10 +44,22 @@ const load = (filename: string): [sb.Schema, Db] => {
   }
 }
 
-export function emitChangeEvent(db: Db, from: 'local' | 'remote') {
-  for (const listener of db.listeners) {
-    listener(from)
+export function emitChangeEvent(db: Db, from: 'local' | 'remote', changed: Set<[docName: DocName, oldHeads: LV[]]>) {
+  const deltasToSend = new Map<DocName, DbEntryDiff>()
+  for (const [docName, oldHead] of changed) {
+    const entry = db.entries.get(docName)!
+
+    if (oldHead.length === 0 || !causalGraph.lvEq(oldHead, entry.cg.heads)) {
+      deltasToSend.set(docName, serializePartialSince(entry, oldHead))
+    }
   }
+
+  for (const listener of db.listeners) {
+    listener(from, changed, deltasToSend)
+  }
+}
+export function emitChangeEvent1(db: Db, from: 'local' | 'remote', doc: DocName, oldHead: LV[]) {
+  emitChangeEvent(db, from, new Set([[doc, oldHead]]))
 }
 
 export function createOrLoadDb(filename: string = process.env['DB_FILE'] ?? 'db.scb'): Db {
@@ -88,6 +102,65 @@ process.on('unhandledRejection', e => {
 })
 
 
+export function getAllSummaries(db: Db): Map<DocName, VersionSummary> {
+  const result = new Map
+  for (const [k, entry] of db.entries) {
+    const summary = causalGraph.summarizeVersion(entry.cg)
+    result.set(k, summary)
+  }
+  return result
+}
+
+export function insertNewEntry(db: Db, appType: string, val?: Record<string, Primitive>): DocName {
+  const docName = createRandomId()
+  const entry = createDbEntry(appType)
+  db.entries.set(docName, entry)
+
+  if (val != null) recursivelySetRoot(entry, db.agent, val)
+
+  // Firing this asyncronously, since the new entry
+  // will probably be modified now.
+  setImmediate(() => emitChangeEvent1(db, 'local', docName, []))
+
+  return docName
+}
+
+export function mergeEntryDiff(db: Db, name: DocName, diff: DbEntryDiff): LVRange {
+  let localEntry = db.entries.get(name)
+  if (localEntry == null) {
+    localEntry = createDbEntry(diff.appType)
+    db.entries.set(name, localEntry)
+  } else {
+    if (localEntry.appType !== diff.appType) throw Error('Conflicting app type for doc ' + name)
+  }
+
+  const range = mergePartialDiff(localEntry, diff)
+  return range
+}
+
+export function localSet(db: Db, name: DocName, val: Record<string, Primitive>, container: LV = ROOT_LV) {
+  const entry = db.entries.get(name)
+  if (entry == null) throw Error('Missing entry ' + name)
+
+  const oldHead = entry.cg.heads.slice()
+  const start = causalGraph.nextLV(entry.cg)
+  recursivelySetMap(entry, db.agent, container, val)
+
+  if (start !== causalGraph.nextLV(entry.cg)) {
+    emitChangeEvent1(db, 'local', name, oldHead)
+  }
+}
+
+// export function insertExistingEntry(db: Db, name: DocName, diff: DbEntryDiff) {
+//   const entry = createDbEntry(diff.appType)
+//   db.entries.set(docName, entry)
+
+//   // Firing this asyncronously, since the new entry
+//   // will probably be modified now.
+//   setImmediate(() => emitChangeEvent(db, 'local', docName))
+
+//   return docName
+// }
 
 
 

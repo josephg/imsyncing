@@ -1,20 +1,26 @@
 import { testSimpleRoundTrip } from "schemaboi/testhelpers.js"
 import * as cg from "./causal-graph.js"
-import { createDb } from "./db.js"
-import { appDbSchema, appNetSchema } from './schema.js'
+import * as database from "./db.js"
+import { appDbSchema, appNetSchema, localDbSchema } from './schema.js'
 import * as ss from "./stateset.js"
 import { NetMsg } from "./types.js"
 
+import {Console} from 'node:console'
+const console = new Console({
+  stdout: process.stdout,
+  stderr: process.stderr,
+  inspectOptions: {depth: null}
+})
 
 Error.stackTraceLimit = Infinity
-testSimpleRoundTrip(appDbSchema, 'AnyType', null)
-testSimpleRoundTrip(appDbSchema, 'AnyType', true)
-testSimpleRoundTrip(appDbSchema, 'AnyType', 'hi')
-testSimpleRoundTrip(appDbSchema, 'AnyType', 123)
-testSimpleRoundTrip(appDbSchema, 'AnyType', 123.456)
-testSimpleRoundTrip(appDbSchema, 'AnyType', { x: 'hi' })
-testSimpleRoundTrip(appDbSchema, 'AnyType', [1, 2, 'hi'])
-testSimpleRoundTrip(appDbSchema, 'Op', { type: 'set', val: 123 })
+testSimpleRoundTrip(appDbSchema, 'Primitive', null)
+testSimpleRoundTrip(appDbSchema, 'Primitive', true)
+testSimpleRoundTrip(appDbSchema, 'Primitive', 'hi')
+testSimpleRoundTrip(appDbSchema, 'Primitive', 123)
+testSimpleRoundTrip(appDbSchema, 'Primitive', 123.456)
+testSimpleRoundTrip(appDbSchema, 'Primitive', { x: 'hi' })
+testSimpleRoundTrip(appDbSchema, 'Primitive', [1, 2, 'hi'])
+// testSimpleRoundTrip(appDbSchema, 'Op', { type: 'set', val: 123 })
 testSimpleRoundTrip(appDbSchema, 'CausalGraph', cg.create())
 {
   const cg1 = cg.create()
@@ -25,14 +31,14 @@ testSimpleRoundTrip(appDbSchema, 'CausalGraph', cg.create())
   testSimpleRoundTrip(appDbSchema, 'CausalGraph', cg1)
 }
 testSimpleRoundTrip(appDbSchema, 'RawVersion', ['seph', 123])
-testSimpleRoundTrip(appDbSchema, 'Db', createDb())
-{
-  const stateSet = ss.create()
-  ss.localInsert(stateSet, ['seph', 0], 123)
-  ss.localInsert(stateSet, ['seph', 1], 321)
+// testSimpleRoundTrip(appDbSchema, 'Db', db.createDb())
+// {
+//   const stateSet = ss.create()
+//   ss.localInsert(stateSet, ['seph', 0], 123)
+//   ss.localInsert(stateSet, ['seph', 1], 321)
 
-  testSimpleRoundTrip(appDbSchema, 'StateSet', stateSet)
-}
+//   testSimpleRoundTrip(appDbSchema, 'StateSet', stateSet)
+// }
 
 // {
 //   let helloMsg: NetMsg = {type: 'Hello', inboxVersion: {seph: [[0, 23]]}}
@@ -46,22 +52,65 @@ testSimpleRoundTrip(appDbSchema, 'Db', createDb())
 //   }
 //   testSimpleRoundTrip(appNetSchema, 'NetMessage', deltaMsg)
 // }
+// {
+//   const stateSet = ss.create()
+//   ss.localInsert(stateSet, ['seph', 0], 123)
+//   ss.localInsert(stateSet, ['seph', 1], 321)
+
+//   const delta = ss.deltaSince(stateSet)
+
+//   const helloMsg: NetMsg = {
+//     type: 'Hello',
+//     inboxVersion: cg.summarizeVersion(stateSet.cg),
+//     sync: 'all',
+//   }
+//   testSimpleRoundTrip(appNetSchema, 'NetMessage', helloMsg)
+
+//   const deltaMsg: NetMsg = { type: 'InboxDelta', delta }
+//   testSimpleRoundTrip(appNetSchema, 'NetMessage', deltaMsg)
+
+// }
+
 {
-  const stateSet = ss.create()
-  ss.localInsert(stateSet, ['seph', 0], 123)
-  ss.localInsert(stateSet, ['seph', 1], 321)
+  const db = database.createDb()
+  testSimpleRoundTrip(appDbSchema, 'Db', db)
 
-  const delta = ss.deltaSince(stateSet)
-
-  const helloMsg: NetMsg = {
-    type: 'Hello',
-    inboxVersion: cg.summarizeVersion(stateSet.cg),
-    sync: 'all',
+  {
+    const helloMsg: NetMsg = {
+      type: 'Hello',
+      sync: 'all',
+      versions: database.getAllSummaries(db),
+    }
+    // console.log(helloMsg)
+    testSimpleRoundTrip(appNetSchema, 'NetMessage', helloMsg)
   }
-  testSimpleRoundTrip(appNetSchema, 'NetMessage', helloMsg)
 
-  const deltaMsg: NetMsg = { type: 'InboxDelta', delta }
-  testSimpleRoundTrip(appNetSchema, 'NetMessage', deltaMsg)
+
+  database.insertNewEntry(db, 'post', {cool: true})
+
+  // console.log('db', db)
+  testSimpleRoundTrip(appDbSchema, 'Db', db)
+
+  {
+    const helloMsg: NetMsg = {
+      type: 'Hello',
+      sync: 'all',
+      versions: database.getAllSummaries(db),
+    }
+    // console.log(helloMsg)
+    testSimpleRoundTrip(appNetSchema, 'NetMessage', helloMsg)
+  }
+
+  {
+    db.listeners.add((_from, _changed, deltas) => {
+      // console.log('deltas', deltas)
+      const msg: NetMsg = {
+        type: 'DocDeltas',
+        deltas
+      }
+      testSimpleRoundTrip(appNetSchema, 'NetMessage', msg)
+    })
+  }
+
 
 }
-

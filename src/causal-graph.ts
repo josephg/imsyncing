@@ -68,6 +68,12 @@ export const nextLV = (cg: CausalGraph): LV => (
   lastOr(cg.entries, e => e.vEnd, 0)
 )
 
+export const nextSeqForAgent = (cg: CausalGraph, agent: string): number => {
+  const entries = cg.agentToVersion[agent]
+  if (entries == null) return 0
+  return entries[entries.length - 1].seqEnd
+}
+
 const tryAppendEntries = (a: CGEntry, b: CGEntry): boolean => {
   const canAppend = b.version === a.vEnd
     && a.agent === b.agent
