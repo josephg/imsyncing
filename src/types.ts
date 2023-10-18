@@ -214,19 +214,13 @@ export interface Db {
    */
   entries: Map<DocName, DbEntry>
 
-  // agent: AgentVersion
+  // The agent and syncConfig should probably go in the RuntimeContext,
+  // but we also need to persist & restore configuration like this to disk.
+  // For now I'm putting them here, but I might refactor this to move them
+  // into a config object or something. TODO.
   agent: string,
 
-  syncConfig: SyncConfig
-
-  // listeners: Set<(from: 'local' | 'remote', docName: DocName, firstLV: LV) => void>
-
-  // TODO: This function signature is a mess.
-  listeners: Set<(
-    from: 'local' | 'remote',
-    changed: Set<[docName: DocName, oldHeads: LV[]]>,
-    deltas: Map<DocName, DbEntryDiff>
-  ) => void>,
+  syncConfig: SyncConfig,
 }
 
 export interface InboxFields {
@@ -237,3 +231,22 @@ export interface InboxFields {
   // Also we might not have the version named by heads.
   heads: RawVersion[],
 }
+
+export type DbChangeListener = (
+  from: 'local' | 'remote',
+  changed: Set<DocName>,
+  // changed: Set<[docName: DocName, oldHeads: LV[]]>,
+  deltas: Map<DocName, DbEntryDiff>
+) => void
+
+
+export type SimpleEventEmitter<F extends (...args: any[]) => void> = Set<F>
+
+export interface RuntimeContext {
+  db: Db,
+
+  globalKnownVersions: Map<DocName, LV[]>
+
+  listeners: SimpleEventEmitter<DbChangeListener>,
+}
+

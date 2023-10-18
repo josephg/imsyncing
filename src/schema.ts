@@ -58,11 +58,11 @@ export const appDbSchema: sb.AppSchema = {
         entries: sb.map(sb.Id, sb.ref('DbEntry'), 'map'), // Not yet used.
         agent: sb.Id,
         syncConfig: sb.ref('SyncConfig'),
-        listeners: {
-          type: 'ref', key: 'notused',
-          skip: true,
-          defaultValue: () => new Set(),
-        }
+        // listeners: {
+        //   type: 'ref', key: 'notused',
+        //   skip: true,
+        //   defaultValue: () => new Set(),
+        // }
       },
 
       decode(db) {
@@ -115,7 +115,7 @@ export const appDbSchema: sb.AppSchema = {
     SyncConfig: {
       type: 'enum',
       variants: ['all', 'none'],
-      decode(variant, data) { return variant },
+      decode(variant, _data) { return variant },
       encode(variant) { return {type: variant} }
     },
 

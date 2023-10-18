@@ -6,7 +6,7 @@
 
 import bs from 'binary-search'
 import { LV } from "./types.js"
-import { assertSorted } from './utils.js'
+import { assertSorted, assertSortedCustom } from './utils.js'
 
 /**
  * Each value exists in this list once for each version it has.
@@ -76,5 +76,5 @@ export function *entriesBetween<F>(index: LMIndex<F>, start: LV, end: LV = -1): 
 
 export function checkIndex<F>(index: LMIndex<F>) {
   // Make sure the index is sorted.
-  assertSorted(index.map(e => e.lv))
+  assertSortedCustom(index, e => e.lv)
 }

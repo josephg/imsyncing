@@ -1,11 +1,10 @@
 import repl from 'node:repl'
 import * as dbLib from './db.js'
 import * as causalGraph from './causal-graph.js'
-import { Db, DocName, LV, Primitive, RawVersion } from './types.js'
-import { nextVersion } from './utils.js'
+import { Db, DocName, LV, Primitive, RawVersion, RuntimeContext } from './types.js'
 
 // ***** REPL
-export default function startRepl(db: Db) {
+export default function startRepl(ctx: RuntimeContext) {
   const r = repl.start({
     prompt: '> ',
     useColors: true,
@@ -13,18 +12,21 @@ export default function startRepl(db: Db) {
     // completer: true,
     ignoreUndefined: true,
   })
+  const db = ctx.db
   r.setupHistory('.history', err => {
     if (err) throw err
   
+    r.context.ctx = ctx
     r.context.db = db
     r.context.cg = causalGraph
 
     r.context.newDoc = (appType: string = 'post', val?: Record<string, Primitive>): DocName => {
-      return dbLib.insertNewEntry(db, appType, val)
+      if (typeof appType !== 'string') throw Error('App type must be string')
+      return dbLib.insertAndNotify(ctx, appType, val)
     }
 
     r.context.set = (k: DocName, val: Record<string, Primitive>) => {
-      dbLib.localSet(db, k, val)
+      dbLib.setAndNotify(ctx, k, val)
     }
 
     r.context.get = (k: DocName) => {
@@ -35,6 +37,7 @@ export default function startRepl(db: Db) {
     r.context.getAll = () => {
       return db.entries
     }
+
 
     // r.context.insert = (val: Primitive) => {
     //   // db.inbox
@@ -72,7 +75,7 @@ export default function startRepl(db: Db) {
       process.exit(0)
     })
   
-    db.listeners.add((type: 'local' | 'remote') => {
+    ctx.listeners.add((type: 'local' | 'remote') => {
       if (type === 'remote') {
         console.log('got remote change to db')
         // console.log('new val:', dbLib.getVal(db))

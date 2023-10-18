@@ -1,4 +1,4 @@
-import { RawVersion } from "./types.js"
+import { RawVersion, SimpleEventEmitter } from "./types.js"
 
 export const min2 = (a: number, b: number) => a < b ? a : b
 export const max2 = (a: number, b: number) => a > b ? a : b
@@ -87,3 +87,9 @@ export const assertSorted = (v: number[]) => {
 }
 
 export const errExpr = (str: string): never => { throw Error(str) }
+
+export const emit = <F extends (...args: any[]) => void>(ee: SimpleEventEmitter<F>, ...args: Parameters<F>): void => {
+  for (const listener of ee) {
+    listener(...args)
+  }
+}

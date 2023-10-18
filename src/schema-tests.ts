@@ -3,7 +3,7 @@ import * as cg from "./causal-graph.js"
 import * as database from "./db.js"
 import { appDbSchema, appNetSchema, localDbSchema } from './schema.js'
 import * as ss from "./stateset.js"
-import { NetMsg } from "./types.js"
+import { NetMsg, RuntimeContext } from "./types.js"
 
 import {Console} from 'node:console'
 const console = new Console({
@@ -102,7 +102,12 @@ testSimpleRoundTrip(appDbSchema, 'RawVersion', ['seph', 123])
   }
 
   {
-    db.listeners.add((_from, _changed, deltas) => {
+    const ctx: RuntimeContext = {
+      db,
+      globalKnownVersions: new Map,
+      listeners: new Set,
+    }
+    ctx.listeners.add((_from, _changed, deltas) => {
       // console.log('deltas', deltas)
       const msg: NetMsg = {
         type: 'DocDeltas',
@@ -110,6 +115,7 @@ testSimpleRoundTrip(appDbSchema, 'RawVersion', ['seph', 123])
       }
       testSimpleRoundTrip(appNetSchema, 'NetMessage', msg)
     })
+    database.insertAndNotify(ctx, 'blah', {cool: false})
   }
 
 

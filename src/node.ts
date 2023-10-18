@@ -1,6 +1,6 @@
 import * as causalGraph from "./causal-graph.js";
-import { LV, NetMsg, VersionSummary, Db, DocName } from "./types.js";
-import { resolvable, wait } from "./utils.js";
+import { LV, NetMsg, VersionSummary, Db, DocName, RuntimeContext, DbEntry } from "./types.js";
+import { emit, resolvable, wait } from "./utils.js";
 import * as database from './db.js'
 // import * as ss from './stateset.js'
 import * as net from 'node:net'
@@ -14,6 +14,7 @@ import { entriesBetween } from "./last-modified-index.js";
 
 import { DbEntryDiff, serializePartialSince } from "./db-entry.js";
 import {Console, assert} from 'node:console'
+import { emitDocsChanged } from "./runtimectx.js";
 const console = new Console({
   stdout: process.stdout,
   stderr: process.stderr,
@@ -22,16 +23,25 @@ const console = new Console({
 Error.stackTraceLimit = Infinity
 
 
-const runProtocol = (sock: net.Socket, db: Db): Promise<void> => {
+const runProtocol = (sock: net.Socket, ctx: RuntimeContext): Promise<void> => {
   type ProtocolState = {
     state: 'waitingForHello'
   } | {
+    state: 'waitingForFirstDeltas',
+
+    /** Versions the remote peer has told us that it has, but we don't have yet. */
+    unknownVersions: Map<DocName, VersionSummary>,
+    // unknownVersions: Map<DocName, VersionSummary | null>,
+  } | {
     state: 'established',
 
-    gotFirstDelta: boolean,
+    /**
+     * When this peer is ahead of the global known versions (ie, we've recieved a message
+     * from a peer with a version but haven't broadcast that version back out to other peers
+     * yet), that version gets marked here.
+     */
+    versionOverlay: Map<DocName, LV[]>,
 
-    /** Versions the remote peer has that we don't have yet. */
-    unknownVersions: Map<DocName, VersionSummary | null>,
 
     // remoteVersions: Map<DocName, {
     //   // /**
@@ -51,12 +61,13 @@ const runProtocol = (sock: net.Socket, db: Db): Promise<void> => {
     //   // unknownVersions: VersionSummary | null
     // }>,
 
+
+
   }
 
   let state: ProtocolState = { state: 'waitingForHello' }
 
   const finishPromise = resolvable()
-
 
   // const sendInboxDelta = (sinceVersion: LV[]) => {
   //   console.log('sending delta to', sock.remoteAddress, sock.remotePort, 'since', sinceVersion)
@@ -64,38 +75,89 @@ const runProtocol = (sock: net.Socket, db: Db): Promise<void> => {
   //   write({ type: 'InboxDelta', delta })
   // }
 
-  const onVersionChanged = (from: 'local' | 'remote', changed: Set<[docName: DocName, oldHeads: LV[]]>, deltasToSend: Map<DocName, DbEntryDiff>) => {
-    console.log('onVersionChanged', state, changed)
-    if (state.state !== 'established') throw Error('Unexpected connection state')
+  const db = ctx.db
+  // const onVersionChanged = (from: 'local' | 'remote', changed: Set<[docName: DocName, oldHeads: LV[]]>, deltasToSend: Map<DocName, DbEntryDiff>) => {
+  const onVersionChanged = (_from: 'local' | 'remote', changed: Set<DocName>, deltas: Map<DocName, DbEntryDiff>) => {
+    // console.log('onVersionChanged', state, changed, deltas)
 
-    for (const [docName, _oldHead] of changed) {
-      const entry = db.entries.get(docName)!
-      const cg = entry.cg
+    // We're fundamentally in 2 different states when this method is called:
+    // 1. We're in the 'waitingForFirstDeltas' state, where we know some versions
+    //    the peer has that we're missing, but we don't have those versions yet.
+    //    In this case, the deltas we're sending now *MUST NOT* have come from
+    //    that peer. (They're either local changes or come from other peers).
+    //    However, the changes we send need to be trimmed by the unknownVersions
+    //    to get around a bug where we reconnect to 2 peers at once and send them
+    //    changes they definitely have back to them.
+    //
+    // 2. We're in the 'established' state. In this case, we have all the deltas
+    //    from the remote peer. But the remote peer might have just sent us the
+    //    deltas we're broadcasting out now. To avoid sending its own deltas
+    //    back out, we'll trim the outgoing message by the peer's overlay.
 
-      const unknownVersions = state.unknownVersions.get(docName)
-      if (unknownVersions != null) {
-        // The db might now include part of the remainder. Doing this works
-        // around a bug where connecting to 2 computers will result in
-        // re-sending known changes back to them.
-        // console.log('unknown', state.unknownVersions)
-        const [sinceVersion, newUnknownVersions] = causalGraph.intersectWithSummary(
-          cg, unknownVersions, cg.heads
-          // cg, unknownVersions, state.remoteVersion
-        )
-        if (newUnknownVersions == null) {
-          // We've got all the versions
-          assert(causalGraph.lvEq(sinceVersion, cg.heads))
-          console.log('got all versions', docName)
-          state.unknownVersions.delete(docName)
-        } else {
-          // console.log('->known', newUnknownVersions)
-          state.unknownVersions.set(docName, newUnknownVersions)
-        }
+    if (state.state !== 'waitingForFirstDeltas' && state.state !== 'established') {
+       throw Error('Unexpected connection state')
+    }
+
+    // We'll default to sending the (cached) deltas in the function argument. But if
+    // we need to modify the message, we'll override it with this.
+    let localDeltas: Map<DocName, DbEntryDiff> | null = null
+    const insteadSendFrom = (docName: DocName, entry: DbEntry, heads: LV[]) => {
+      if (localDeltas == null) localDeltas = new Map(deltas)
+
+      if (causalGraph.lvEq(heads, entry.cg.heads)) {
+        // We're already up to date. Skip sending this at all.
+        console.log('Skipping sending update to peer for doc', docName)
+        localDeltas.delete(docName)
+      } else {
+        localDeltas.set(docName, serializePartialSince(entry, heads))
       }
     }
 
-    if (deltasToSend.size > 0) {
-      write({ type: 'DocDeltas', deltas: deltasToSend })
+
+    for (const docName of changed) {
+      const entry = db.entries.get(docName)!
+
+      if (state.state === 'waitingForFirstDeltas') {
+        // Trim the message we send by unknown versions the peer already knows about.
+        const cg = entry.cg
+
+        const unknownVersions = state.unknownVersions.get(docName)
+        if (unknownVersions != null) {
+          // The db might now include part of the remainder. Doing this works
+          // around a bug where connecting to 2 computers will result in
+          // re-sending known changes back to them.
+          // console.log('unknown', state.unknownVersions)
+          const [commonVersion, newUV] = causalGraph.intersectWithSummary(
+            cg, unknownVersions, cg.heads
+            // cg, unknownVersions, state.remoteVersion
+          )
+
+          insteadSendFrom(docName, entry, commonVersion)
+
+          if (newUV == null) {
+            // The remote peer might still be missing versions, but we have all of its
+            // versions.
+            // assert(causalGraph.lvEq(commonVersion, cg.heads))
+            // console.log('got all versions', docName)
+            state.unknownVersions.delete(docName)
+          } else {
+            // console.log('->known', newUnknownVersions)
+            state.unknownVersions.set(docName, newUV)
+          }
+        }
+
+      } else if (state.state === 'established') {
+        const overlay = state.versionOverlay.get(docName)
+        if (overlay != null) {
+          insteadSendFrom(docName, entry, overlay)
+        }
+        state.versionOverlay.delete(docName)
+      }
+    }
+
+    const sendDeltas = localDeltas ?? deltas
+    if (sendDeltas.size > 0) {
+      write({ type: 'DocDeltas', deltas: sendDeltas })
     }
   }
 
@@ -110,28 +172,36 @@ const runProtocol = (sock: net.Socket, db: Db): Promise<void> => {
         // We've gotten the version of all the DB entries. Compare it to the local entries
         // and send any versions to the peer that its missing.
         const deltasToSend = new Map<DocName, DbEntryDiff>()
-        const unknownVersions = new Map<DocName, VersionSummary | null>()
+        const unknownVersions = new Map<DocName, VersionSummary>()
 
         for (const [k, summary] of msg.versions) {
           const entry = db.entries.get(k)
-          if (entry == null) continue // The remote peer will discover this and fill us in soon.
 
           // We're looking for versions *we* have that the other peer is missing.
 
-          const cg = entry.cg
-          const [sinceVersion, remainder] = causalGraph.intersectWithSummary(cg, summary)
-          // console.log('known idx version', sinceVersion)
-          if (remainder != null) {
-            // We have some local changes to send.
-            assert(!causalGraph.lvEq(sinceVersion, cg.heads))
+          // const cg = entry.cg
+          const [commonVersion, remainder] = entry == null
+            ? [[], summary]
+            : causalGraph.intersectWithSummary(entry.cg, summary)
 
-            console.log('send delta', k, sinceVersion)
+          // console.log('known idx version', sinceVersion)
+
+          // Note there's 2 things going on here:
+          // 1. We might have changes the remote peer is missing. (commonVersion != heads).
+          // 2. The remote peer may have changes we don't have. (remainder != null)
+          // These are independent!
+
+          if (entry != null && !causalGraph.lvEq(commonVersion, entry.cg.heads)) {
+            // We have some local changes to send.
+            assert(!causalGraph.lvEq(commonVersion, entry.cg.heads))
+
+            console.log('send delta', k, commonVersion)
             // sendDelta(sv)
 
-            deltasToSend.set(k, serializePartialSince(entry, sinceVersion))
+            deltasToSend.set(k, serializePartialSince(entry, commonVersion))
           }
 
-          unknownVersions.set(k, remainder)
+          if (remainder != null) unknownVersions.set(k, remainder)
         }
 
         for (const [k, entry] of db.entries) {
@@ -144,41 +214,86 @@ const runProtocol = (sock: net.Socket, db: Db): Promise<void> => {
         // knows they're up to date.
         write({ type: 'DocDeltas', deltas: deltasToSend })
 
-
         state = {
-          state: 'established',
-          gotFirstDelta: false,
-          // remoteVersion: cg.heads.slice(),
-          // remoteVersion: sinceVersion,
+          state: 'waitingForFirstDeltas',
           unknownVersions,
         }
 
-        db.listeners.add(onVersionChanged)
+        ctx.listeners.add(onVersionChanged)
         break
       }
 
       case 'DocDeltas': {
-        if (state.state !== 'established') throw Error('Invalid state')
-        state.gotFirstDelta = true
+        let unknownVersions: null | Map<DocName, VersionSummary> = null
+        if (state.state === 'waitingForFirstDeltas') {
+          // The first message must contain all the versions we were missing.
+          unknownVersions = state.unknownVersions
 
-        const changed = new Set<[DocName, LV[]]>()
+          state = {
+            state: 'established',
+            versionOverlay: new Map()
+          }
+        }
+
+        if (state.state !== 'established') throw Error('Invalid state')
+
+        const changed = new Set<DocName>()
         for (const [k, delta] of msg.deltas) {
-          const oldEntry = db.entries.get(k)
-          const oldHead = oldEntry ? oldEntry.cg.heads.slice() : []
+          // let entry = db.entries.get(k)
+          // const oldHead = entry ? entry.cg.heads.slice() : []
+
           const [start, end] = database.mergeEntryDiff(db, k, delta)
+
+          // if (entry == null) entry = db.entries.get(k)!
+          let entry = db.entries.get(k)!
+
 
           // Presumably the remote peer has just sent us all the data it has that we were
           // missing. I could call intersectWithSummary2 here, but this should be
           // sufficient.
-          state.unknownVersions.delete(k)
+          const uv = unknownVersions?.get(k)
+          if (uv != null) {
+            // We must have recieved all unknown versions from this peer.
+            const [_ignored, remainder] = causalGraph.intersectWithSummary(entry.cg, uv, entry.cg.heads)
+            if (remainder != null) throw Error("We're still missing versions from remote peer. Bad problem. Fix plz.")
+            unknownVersions!.delete(k)
+          }
 
-          // TODO: Consider emitting a single event no matter how many change.
+
           if (end !== start) {
-            changed.add([k, oldHead])
+            // We have new local changes we didn't know about before.
+            changed.add(k)
+
+            // We need to add this document to the overlay set to prevent ourselves
+            // from broadcasting these changes back to the peer we've just recieved
+            // them from
+
+            // There's 2 implementation choices here:
+            // 1. The versionOverlay variable could just store the new heads we've
+            //    recieved from the remote peer
+            // 2. The versionOverlay stores the remote heads merged with our local
+            //    changes.
+            // Doing 2 for now, but on a whim.
+
+            // Defaulting to oldHead here because the new version might not dominate
+            // the current version we have locally.
+            let overlayHeads = state.versionOverlay.get(k) ?? ctx.globalKnownVersions.get(k) ?? []
+            overlayHeads = causalGraph.advanceVersionFromSerialized(entry.cg, delta.cg, overlayHeads)
+            // Is this really needed?? TODO
+            overlayHeads = causalGraph.findDominators(entry.cg, overlayHeads)
+
+            state.versionOverlay.set(k, overlayHeads)
+            // state.versionOverlay.set(k, entry.cg.heads)
           }
         }
+
+        if (unknownVersions != null && unknownVersions.size != 0) {
+          throw Error('Peer did not send all of the versions we need in the first packet. What')
+        }
+
         if (changed.size > 0) {
-          database.emitChangeEvent(db, 'remote', changed)
+          // emit(ctx.listeners, 'remote', changed)
+          emitDocsChanged(ctx, 'remote', changed)
         }
 
         break
@@ -225,7 +340,7 @@ const runProtocol = (sock: net.Socket, db: Db): Promise<void> => {
 
   finished(sock, (err) => {
     console.log('Socket closed', sock.remoteAddress, sock.remotePort)
-    db.listeners.delete(onVersionChanged)
+    ctx.listeners.delete(onVersionChanged)
     close()
 
     if (err) finishPromise.reject(err)
@@ -241,10 +356,10 @@ const runProtocol = (sock: net.Socket, db: Db): Promise<void> => {
   return finishPromise.promise
 }
 
-const serverOnPort = (port: number, db: Db) => {
+const serverOnPort = (port: number, ctx: RuntimeContext) => {
   const server = net.createServer(async sock => {
     console.log('got server socket connection', sock.remoteAddress, sock.remotePort)
-    runProtocol(sock, db)
+    runProtocol(sock, ctx)
     // handler.write({oh: 'hai'})
   })
 
@@ -253,15 +368,15 @@ const serverOnPort = (port: number, db: Db) => {
   })
 }
 
-const connect1 = (host: string, port: number, db: Db) => {
+const connect1 = (host: string, port: number, ctx: RuntimeContext) => {
   const sock = net.connect({port, host}, () => {
     console.log('connected!')
-    runProtocol(sock, db)
+    runProtocol(sock, ctx)
   })
 }
 
 
-const connect = (host: string, port: number, db: Db) => {
+const connect = (host: string, port: number, ctx: RuntimeContext) => {
   ;(async () => {
     while (true) {
       console.log('Connecting to', host, port, '...')
@@ -274,7 +389,7 @@ const connect = (host: string, port: number, db: Db) => {
       try {
         await connectPromise.promise
         socket.removeListener('error', connectPromise.reject)
-        await runProtocol(socket, db)
+        await runProtocol(socket, ctx)
       } catch (e: any) {
         console.warn('Could not connect:', e.message)
       }
@@ -288,7 +403,19 @@ const connect = (host: string, port: number, db: Db) => {
 
 // ***** Command line argument passing
 {
-  const db = database.createOrLoadDb() // TODO: Use path from command line
+  const [db, save] = database.createOrLoadDb() // TODO: Use path from command line
+
+  const globalKnownVersions = new Map<DocName, LV[]>()
+  for (const [name, entry] of db.entries) {
+    // Initialized with the current version of all entries.
+    globalKnownVersions.set(name, entry.cg.heads.slice())
+  }
+
+  const ctx: RuntimeContext = {
+    db,
+    globalKnownVersions,
+    listeners: new Set([save]),
+  }
 
   for (let i = 2; i < process.argv.length; i++) {
     const command = process.argv[i]
@@ -297,7 +424,7 @@ const connect = (host: string, port: number, db: Db) => {
         const port = +process.argv[++i]
         if (port === 0 || isNaN(port)) throw Error('Invalid port (usage -l <PORT>)')
 
-        serverOnPort(port, db)
+        serverOnPort(port, ctx)
         break
       }
 
@@ -307,7 +434,7 @@ const connect = (host: string, port: number, db: Db) => {
         const port = +process.argv[++i]
         if (port === 0 || isNaN(port)) throw Error('Invalid port (usage -c <HOST> <PORT>)')
 
-        connect(host, port, db)
+        connect(host, port, ctx)
         console.log('connect', host, port)
         break
       }
@@ -326,7 +453,7 @@ const connect = (host: string, port: number, db: Db) => {
     // console.log(process.argv[i])
   }
 
-  startRepl(db)
+  startRepl(ctx)
 }
 
 // const server = net.createServer(async sock => {

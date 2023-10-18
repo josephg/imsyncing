@@ -409,9 +409,10 @@ const intersectWithSummaryFull = (cg: CausalGraph, summary: VersionSummary, visi
 }
 
 /** Yields the intersection (most recent common version) and remainder (if any) */
-export const intersectWithSummary = (cg: CausalGraph, summary: VersionSummary, versions: LV[] = []): [LV[], VersionSummary | null] => {
+export const intersectWithSummary = (cg: CausalGraph, summary: VersionSummary, versionsIn: LV[] = []): [LV[], VersionSummary | null] => {
   let remainder: null | VersionSummary = null
 
+  const versions = versionsIn.slice()
   intersectWithSummaryFull(cg, summary, (agent, startSeq, endSeq, versionStart) => {
     if (versionStart >= 0) {
       const versionEnd = versionStart + (endSeq - startSeq)

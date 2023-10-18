@@ -3,16 +3,16 @@ import * as sb from 'schemaboi'
 import {localDbSchema} from './schema.js'
 import * as fs from 'node:fs'
 // import * as ss from "./stateset.js"
-import { Db, DocName, LV, LVRange, Primitive, ROOT_LV, VersionSummary } from "./types.js"
+import { Db, DbChangeListener, DocName, LV, LVRange, Primitive, ROOT_LV, RuntimeContext, VersionSummary } from "./types.js"
 import * as causalGraph from "./causal-graph.js"
 import { DbEntryDiff, createDbEntry, mergePartialDiff, recursivelySetMap, recursivelySetRoot, serializePartialSince } from "./db-entry.js";
+import { emit1DocChanged } from "./runtimectx.js";
 
 export const createDb = (): Db => ({
   // inbox: ss.create(),
   entries: new Map(),
   agent: createRandomId(),
   syncConfig: 'all',
-  listeners: new Set(),
 })
 
 // const SAVE_FILE = process.env['DB_FILE'] || 'db.scb'
@@ -26,7 +26,9 @@ const saveNow = (filename: string, schema: sb.Schema, db: Db) => {
   console.log('Db saved to', filename)
 }
 
-const load = (filename: string): [sb.Schema, Db] => {
+
+
+const createOrLoadInternal = (filename: string): [sb.Schema, Db] => {
   try {
     const rawData = fs.readFileSync(filename)
     const [mergedSchema, db] = sb.read(localDbSchema, rawData)
@@ -44,29 +46,10 @@ const load = (filename: string): [sb.Schema, Db] => {
   }
 }
 
-export function emitChangeEvent(db: Db, from: 'local' | 'remote', changed: Set<[docName: DocName, oldHeads: LV[]]>) {
-  const deltasToSend = new Map<DocName, DbEntryDiff>()
-  for (const [docName, oldHead] of changed) {
-    const entry = db.entries.get(docName)!
-
-    if (oldHead.length === 0 || !causalGraph.lvEq(oldHead, entry.cg.heads)) {
-      deltasToSend.set(docName, serializePartialSince(entry, oldHead))
-    }
-  }
-
-  for (const listener of db.listeners) {
-    listener(from, changed, deltasToSend)
-  }
-}
-export function emitChangeEvent1(db: Db, from: 'local' | 'remote', doc: DocName, oldHead: LV[]) {
-  emitChangeEvent(db, from, new Set([[doc, oldHead]]))
-}
-
-export function createOrLoadDb(filename: string = process.env['DB_FILE'] ?? 'db.scb'): Db {
-  const [schema, db] = load(filename)
+export function createOrLoadDb(filename: string = process.env['DB_FILE'] ?? 'db.scb'): [Db, DbChangeListener] {
+  const [schema, db] = createOrLoadInternal(filename)
 
   const save = rateLimit(1000, () => saveNow(filename, schema, db))
-  db.listeners.add(save)
 
   process.on('exit', () => {
     // console.log('exit')
@@ -75,7 +58,7 @@ export function createOrLoadDb(filename: string = process.env['DB_FILE'] ?? 'db.
 
   console.log('agent', db.agent)
 
-  return db
+  return [db, save]
 }
 
 // Global singleton database for this process.
@@ -115,12 +98,21 @@ export function insertNewEntry(db: Db, appType: string, val?: Record<string, Pri
   const docName = createRandomId()
   const entry = createDbEntry(appType)
   db.entries.set(docName, entry)
-
   if (val != null) recursivelySetRoot(entry, db.agent, val)
+  return docName
+}
+
+export function insertAndNotify(ctx: RuntimeContext, appType: string, val?: Record<string, Primitive>): DocName {
+  const docName = insertNewEntry(ctx.db, appType, val)
+  // Because nobody knows about this document yet, globalKnownVersions defaults to []
+  // - which is correct.
+  // ctx.globalKnownVersions.set(docName, []) // Nobody knows about this document yet.
 
   // Firing this asyncronously, since the new entry
   // will probably be modified now.
-  setImmediate(() => emitChangeEvent1(db, 'local', docName, []))
+  // setImmediate(() => emitChangeEvent1(db, 'local', docName, []))
+  // emitChangeEvent1(ctx, 'local', docName, [])
+  emit1DocChanged(ctx, 'local', docName)
 
   return docName
 }
@@ -138,16 +130,17 @@ export function mergeEntryDiff(db: Db, name: DocName, diff: DbEntryDiff): LVRang
   return range
 }
 
-export function localSet(db: Db, name: DocName, val: Record<string, Primitive>, container: LV = ROOT_LV) {
-  const entry = db.entries.get(name)
+export function setAndNotify(ctx: RuntimeContext, name: DocName, val: Record<string, Primitive>, container: LV = ROOT_LV) {
+  const entry = ctx.db.entries.get(name)
   if (entry == null) throw Error('Missing entry ' + name)
 
-  const oldHead = entry.cg.heads.slice()
+  // const oldHead = entry.cg.heads.slice()
   const start = causalGraph.nextLV(entry.cg)
-  recursivelySetMap(entry, db.agent, container, val)
+  recursivelySetMap(entry, ctx.db.agent, container, val)
 
   if (start !== causalGraph.nextLV(entry.cg)) {
-    emitChangeEvent1(db, 'local', name, oldHead)
+    // emitChangeEvent1(ctx, 'local', name, oldHead)
+    emit1DocChanged(ctx, 'local', name)
   }
 }
 
