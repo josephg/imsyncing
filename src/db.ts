@@ -35,7 +35,7 @@ const createOrLoadInternal = (filename: string): [sb.Schema, Db] => {
     return [mergedSchema, db as Db]
   } catch (e: any) {
     if (e.code == 'ENOENT') {
-      console.warn('Warning: Existing database does not exist. Creating a new one!')
+      console.warn(`Warning: Existing database does not exist. Creating new database at ${filename}`)
       const db = createDb()
       saveNow(filename, localDbSchema, db)
       return [localDbSchema, db]

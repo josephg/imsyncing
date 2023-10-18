@@ -1,9 +1,8 @@
 import { testSimpleRoundTrip } from "schemaboi/testhelpers.js"
-import * as cg from "./causal-graph.js"
-import * as database from "./db.js"
-import { appDbSchema, appNetSchema, localDbSchema } from './schema.js'
-import * as ss from "./stateset.js"
-import { NetMsg, RuntimeContext } from "./types.js"
+import * as cg from "../src/causal-graph.js"
+import * as database from "../src/db.js"
+import { appDbSchema, appNetSchema, localDbSchema } from '../src/schema.js'
+import { NetMsg, RuntimeContext } from "../src/types.js"
 
 import {Console} from 'node:console'
 const console = new Console({

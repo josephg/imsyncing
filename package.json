@@ -4,6 +4,11 @@
   "main": "index.js",
   "type": "module",
   "license": "MIT",
+  "scripts": {
+    "start": "node dist/src/node.js -l 9888",
+    "test": "npx tsc && node dist/test/schema-tests.js",
+    "prepare": "rm -rf dist && tsc -p ."
+  },
   "devDependencies": {
     "@types/node": "^20.5.9",
     "@types/polka": "^0.5.4",
