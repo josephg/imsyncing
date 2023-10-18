@@ -9,7 +9,6 @@ import { localNetSchema } from "./schema.js";
 import handle from "./message-stream.js";
 import { finished } from "node:stream";
 import startRepl from './repl.js'
-import { entriesBetween } from "./last-modified-index.js";
 // import { modifiedKeysSince } from "./last-modified-index.js";
 
 import { DbEntryDiff, serializePartialSince } from "./db-entry.js";

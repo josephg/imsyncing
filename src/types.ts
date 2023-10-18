@@ -1,11 +1,6 @@
-// import { type } from "os"
-
-// import { PartialSerializedCGV2 } from "./causal-graph.js"
 import type * as causalGraph from "./causal-graph.js"
 import type { DbEntryDiff } from "./db-entry.js"
 import type { LMIndex } from "./last-modified-index.js"
-// import * as ss from "./stateset.js"
-import type { AgentVersion } from "./utils.js"
 
 export type RawVersion = [agent: string, seq: number]
 

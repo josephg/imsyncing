@@ -3,7 +3,7 @@
 
 import { CRDTValue, CRDTMapValue, MapKey, CreateValue, DbEntry, LV, MVRegister, Op, Pair, Primitive, ROOT_LV, RawVersion, RegisterValue, LVRange } from "./types.js"
 import * as causalGraph from './causal-graph.js'
-import { AgentVersion, assertSorted, assertSortedCustom, errExpr } from "./utils.js"
+import { assertSortedCustom, errExpr } from "./utils.js"
 import { addIndex, entriesBetween, removeIndex } from "./last-modified-index.js"
 import { Console } from "node:console"
 

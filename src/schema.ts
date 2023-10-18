@@ -1,10 +1,7 @@
 import * as sb from 'schemaboi'
-import { Pair, DbEntry, LV, NetMsg, Primitive, RawVersion, RegisterValue } from "./types.js";
-import * as cg from './causal-graph.js';
-import EventEmitter from 'events';
-import { Db } from "./types.js";
-import * as ss from './stateset.js';
-import { hydrateIndex } from './db-entry.js';
+import { Pair, DbEntry, LV, NetMsg, Primitive, RawVersion, RegisterValue } from "./types.js"
+import * as cg from './causal-graph.js'
+import { hydrateIndex } from './db-entry.js'
 
 const LV = sb.prim('u64')
 

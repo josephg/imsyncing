@@ -1,5 +1,5 @@
-import { Socket } from 'node:net';
-import { Schema, mergeSchemas, metaSchema, readRaw, writeLocalSchema, writeRawInto } from 'schemaboi';
+import { Socket } from 'node:net'
+import { Schema, mergeSchemas, metaSchema, readRaw, writeLocalSchema, writeRawInto } from 'schemaboi'
 
 // export async function *byMessage(stream: AsyncIterable<Uint8Array>) {
 // export async function *byMessage(stream: AsyncIterable<Buffer>) {

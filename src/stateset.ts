@@ -1,10 +1,13 @@
 import { LV, LVRange, Primitive, RawVersion, Pair } from "./types.js"
-import { CausalGraph } from "./causal-graph.js"
 import * as causalGraph from './causal-graph.js'
 import bs from 'binary-search'
 import assert from 'assert/strict'
 import { assertSorted } from "./utils.js"
 import { LMIndex, addIndex, checkIndex, entriesBetween, lookupIndex, removeIndex } from "./last-modified-index.js"
+
+// This code is currently unused. I'm keeping it because it might be useful
+// later, but it might get nuked at some point.
+throw Error('ununsed')
 
 /** StateSet implements a simple CRDT set object with no history.
  *
@@ -25,7 +28,7 @@ export interface StateSet<T=Primitive> {
    */
   index: LMIndex<{key: LV}>,
 
-  cg: CausalGraph,
+  cg: causalGraph.CausalGraph,
 }
 
 export function create<T=Primitive>(): StateSet<T> {
@@ -36,7 +39,7 @@ export function create<T=Primitive>(): StateSet<T> {
   }
 }
 
-export function hydrate<T>(values: StateSet<T>['values'], cg: CausalGraph): StateSet<T> {
+export function hydrate<T>(values: StateSet<T>['values'], cg: causalGraph.CausalGraph): StateSet<T> {
   const index: StateSet<T>['index'] = []
 
   for (const [key, vals] of values) {

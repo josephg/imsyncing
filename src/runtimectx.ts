@@ -20,9 +20,7 @@ export function emitDocsChanged(ctx: RuntimeContext, from: 'local' | 'remote', c
     ctx.globalKnownVersions.set(docName, entry.cg.heads.slice())
   }
 
-  for (const listener of ctx.listeners) {
-    listener(from, changed, deltasToSend)
-  }
+  emit(ctx.listeners, from, changed, deltasToSend)
 }
 
 // export function emitChangeEvent1(ctx: RuntimeContext, from: 'local' | 'remote', doc: DocName, oldHead: LV[]) {
