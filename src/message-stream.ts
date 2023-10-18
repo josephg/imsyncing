@@ -1,24 +1,5 @@
-import {bufContainsVarint, bytesUsed, decode} from 'bijective-varint'
 import { Socket } from 'node:net';
 import { Schema, mergeSchemas, metaSchema, readRaw, writeLocalSchema, writeRawInto } from 'schemaboi';
-
-// export async function *byLine(stream) {
-//   let buf = null
-//   for await (const data of stream) {
-//     buf = buf == null ? data
-//       : Buffer.concat([buf, data])
-
-//     // Yield start if it contains a newline
-//     while (true) {
-//       const newlinePos = buf.indexOf('\n')
-//       if (newlinePos < 0) break
-
-//       const start = buf.slice(0, newlinePos)
-//       yield start.toString('utf8')
-//       buf = buf.slice(newlinePos + 1)
-//     }
-//   }
-// }
 
 // export async function *byMessage(stream: AsyncIterable<Uint8Array>) {
 // export async function *byMessage(stream: AsyncIterable<Buffer>) {

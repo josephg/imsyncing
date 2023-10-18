@@ -2,6 +2,7 @@ import repl from 'node:repl'
 import * as dbLib from './db.js'
 import * as causalGraph from './causal-graph.js'
 import { Db, DocName, LV, Primitive, RawVersion, RuntimeContext } from './types.js'
+import { toJS } from './db-entry.js'
 
 // ***** REPL
 export default function startRepl(ctx: RuntimeContext) {
@@ -29,42 +30,18 @@ export default function startRepl(ctx: RuntimeContext) {
       dbLib.setAndNotify(ctx, k, val)
     }
 
-    r.context.get = (k: DocName) => {
-      // TODO: Nice JSON wrapper.
+    r.context.getRaw = (k: DocName, raw: boolean = false) => {
       return db.entries.get(k)
     }
 
-    r.context.getAll = () => {
-      return db.entries
+    r.context.get = (k: DocName) => {
+      const entry = db.entries.get(k)
+      return entry == null ? null : toJS(entry)
     }
 
-
-    // r.context.insert = (val: Primitive) => {
-    //   // db.inbox
-    //   const key = ss.localInsert(db.inbox, nextVersion(db.agent), val)
-    //   dbLib.emitChangeEvent(db, 'local')
-    //   return key
-    // }
-
-    // r.context.set = (val: Primitive) => {
-    //   dbLib.set(db, val)
-    // }
-
-    // r.context.get1 = () => {
-    //   return dbLib.getVal(db)
-    // }
-    // r.context.get = (key: LV | RawVersion) => {
-    //   if (Array.isArray(key)) {
-    //     key = causalGraph.rawToLV2(db.inbox.cg, key)
-    //   }
-    //   // return dbLib.getAllVals(db)
-
-    //   return ss.get(db.inbox, key)
-    // }
-  
-    // r.context.getAll = () => {
-    //   return db.inbox.values
-    // }
+    r.context.getAll = () => {
+      return [...db.entries.entries()].map(([k, e]) => ([k, toJS(e)]))
+    }
 
     // Insert a new item.
     // r.context.i = (rootData: data: Primitive) => {

@@ -414,6 +414,28 @@ export function recursivelySetRoot(entry: DbEntry, agent: string, val: Record<st
   recursivelySetMap(entry, agent, ROOT_LV, val)
 }
 
+export function toJS(entry: DbEntry, crdtId: LV = ROOT_LV): any {
+  const crdt = entry.crdts.get(crdtId)!
+  if (crdt.type === 'register') {
+    const [lv, val] = causalGraph.tieBreakPairs(entry.cg, crdt.value)
+    return val.type === 'crdt' ? toJS(entry, lv) : val.val
+  } else if (crdt.type === 'map') {
+    // I'm parsing it into a map in all cases. It'd be nice to support Maps here too.
+    const result: Record<string, any> = {}
+
+    for (const [key, inner] of crdt.registers) {
+      const [lv, val] = causalGraph.tieBreakPairs(entry.cg, inner)
+
+      const parsed = val.type === 'crdt' ? toJS(entry, lv) : val.val
+      result[''+key] = parsed
+    }
+
+    return result
+  } else {
+    throw Error('NYI CRDT type')
+  }
+}
+
 
 
 // export type SnapRegisterValue = {type: 'primitive', val: Primitive}

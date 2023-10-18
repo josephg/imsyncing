@@ -25,14 +25,21 @@ Error.stackTraceLimit = Infinity
 
 const runProtocol = (sock: net.Socket, ctx: RuntimeContext): Promise<void> => {
   type ProtocolState = {
+    /** We haven't recieved any messages from this peer yet */
     state: 'waitingForHello'
   } | {
+    /**
+     * We've gotten the first message saying the version of everything, but haven't
+     * gotten any deltas yet.
+     */
     state: 'waitingForFirstDeltas',
 
     /** Versions the remote peer has told us that it has, but we don't have yet. */
     unknownVersions: Map<DocName, VersionSummary>,
-    // unknownVersions: Map<DocName, VersionSummary | null>,
   } | {
+    /**
+     * We've established a connection and recieved our first chunk of document deltas.
+     */
     state: 'established',
 
     /**
@@ -41,42 +48,13 @@ const runProtocol = (sock: net.Socket, ctx: RuntimeContext): Promise<void> => {
      * yet), that version gets marked here.
      */
     versionOverlay: Map<DocName, LV[]>,
-
-
-    // remoteVersions: Map<DocName, {
-    //   // /**
-    //   //  * The version that we expect the remote peer to have.
-    //   //  * This includes sent versions that haven't been acknowledged yet.
-    //   //  *
-    //   //  * It is always <= our current version.
-    //   //  *
-    //   //  * The remoteVersion on all connected peers will generally move in lockstep.
-    //   //  * We still have this value here because if we're connected to 2 peers, we
-    //   //  * update remoteVersion when we get deltas from one peer and that way we know
-    //   //  * not to reflect the changes back to that peer.
-    //   //  */
-    //   // remoteVersion: LV[],
-
-    //   // /** Versions the remote peer has that we don't have yet. */
-    //   // unknownVersions: VersionSummary | null
-    // }>,
-
-
-
   }
 
   let state: ProtocolState = { state: 'waitingForHello' }
 
   const finishPromise = resolvable()
 
-  // const sendInboxDelta = (sinceVersion: LV[]) => {
-  //   console.log('sending delta to', sock.remoteAddress, sock.remotePort, 'since', sinceVersion)
-  //   const delta = ss.deltaSince(db.inbox, sinceVersion)
-  //   write({ type: 'InboxDelta', delta })
-  // }
-
   const db = ctx.db
-  // const onVersionChanged = (from: 'local' | 'remote', changed: Set<[docName: DocName, oldHeads: LV[]]>, deltasToSend: Map<DocName, DbEntryDiff>) => {
   const onVersionChanged = (_from: 'local' | 'remote', changed: Set<DocName>, deltas: Map<DocName, DbEntryDiff>) => {
     // console.log('onVersionChanged', state, changed, deltas)
 
@@ -112,7 +90,6 @@ const runProtocol = (sock: net.Socket, ctx: RuntimeContext): Promise<void> => {
         localDeltas.set(docName, serializePartialSince(entry, heads))
       }
     }
-
 
     for (const docName of changed) {
       const entry = db.entries.get(docName)!
@@ -195,9 +172,7 @@ const runProtocol = (sock: net.Socket, ctx: RuntimeContext): Promise<void> => {
             // We have some local changes to send.
             assert(!causalGraph.lvEq(commonVersion, entry.cg.heads))
 
-            console.log('send delta', k, commonVersion)
-            // sendDelta(sv)
-
+            // console.log('send delta', k, commonVersion)
             deltasToSend.set(k, serializePartialSince(entry, commonVersion))
           }
 
@@ -239,14 +214,8 @@ const runProtocol = (sock: net.Socket, ctx: RuntimeContext): Promise<void> => {
 
         const changed = new Set<DocName>()
         for (const [k, delta] of msg.deltas) {
-          // let entry = db.entries.get(k)
-          // const oldHead = entry ? entry.cg.heads.slice() : []
-
           const [start, end] = database.mergeEntryDiff(db, k, delta)
-
-          // if (entry == null) entry = db.entries.get(k)!
           let entry = db.entries.get(k)!
-
 
           // Presumably the remote peer has just sent us all the data it has that we were
           // missing. I could call intersectWithSummary2 here, but this should be
@@ -258,7 +227,6 @@ const runProtocol = (sock: net.Socket, ctx: RuntimeContext): Promise<void> => {
             if (remainder != null) throw Error("We're still missing versions from remote peer. Bad problem. Fix plz.")
             unknownVersions!.delete(k)
           }
-
 
           if (end !== start) {
             // We have new local changes we didn't know about before.
@@ -283,7 +251,6 @@ const runProtocol = (sock: net.Socket, ctx: RuntimeContext): Promise<void> => {
             overlayHeads = causalGraph.findDominators(entry.cg, overlayHeads)
 
             state.versionOverlay.set(k, overlayHeads)
-            // state.versionOverlay.set(k, entry.cg.heads)
           }
         }
 
@@ -299,42 +266,8 @@ const runProtocol = (sock: net.Socket, ctx: RuntimeContext): Promise<void> => {
         break
       }
 
-      // case 'InboxDelta': {
-      //   if (state.state !== 'established') throw Error('Invalid state')
-
-      //   // console.log('got delta', msg.cg, msg.ops)
-
-      //   // Importantly, the notify event will fire after other syncronous stuff we do here.
-      //   const updated = ss.mergeDelta(db.inbox, msg.delta)
-      //   // database.mergeDelta(db, msg.cg, msg.ops)
-
-      //   const cg = db.inbox.cg
-
-      //   state.remoteVersion = causalGraph.advanceVersionFromSerialized(
-      //     cg, msg.delta.cg, state.remoteVersion
-      //   )
-      //   // TODO: Ideally, this shouldn't be necessary! But it is because the remoteVersion
-      //   // also gets updated as a result of versions *we* send.
-      //   state.remoteVersion = causalGraph.findDominators(cg, state.remoteVersion)
-      //   console.log('new inbox version', state.remoteVersion)
-
-      //   // Presumably the remote peer has just sent us all the data it has that we were
-      //   // missing. I could call intersectWithSummary2 here, but this should be
-      //   // sufficient.
-      //   state.unknownVersions = null
-
-      //   if (updated[0] !== updated[1]) {
-      //     for (const {key} of entriesBetween(db.inbox.index, updated[0], updated[1])) {
-      //       console.log('Modified inbox key', key)
-      //     }
-      //   }
-
-      //   database.emitChangeEvent(db, 'local')
-      //   break
-      // }
-
       // default:
-      //   console.warn('Unrecognised network message', msg.type)
+      //   console.warn('Unrecognised network message', msg)
     }
   })
 
@@ -360,7 +293,6 @@ const serverOnPort = (port: number, ctx: RuntimeContext) => {
   const server = net.createServer(async sock => {
     console.log('got server socket connection', sock.remoteAddress, sock.remotePort)
     runProtocol(sock, ctx)
-    // handler.write({oh: 'hai'})
   })
 
   server.listen(port, () => {

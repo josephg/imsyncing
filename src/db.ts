@@ -144,20 +144,6 @@ export function setAndNotify(ctx: RuntimeContext, name: DocName, val: Record<str
   }
 }
 
-// export function insertExistingEntry(db: Db, name: DocName, diff: DbEntryDiff) {
-//   const entry = createDbEntry(diff.appType)
-//   db.entries.set(docName, entry)
-
-//   // Firing this asyncronously, since the new entry
-//   // will probably be modified now.
-//   setImmediate(() => emitChangeEvent(db, 'local', docName))
-
-//   return docName
-// }
-
-
-
-
 
 // export const getAllVals = (db: Db): Primitive[] => {
 //   // If the branch is empty, we'll return an empty list.
