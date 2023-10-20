@@ -88,4 +88,4 @@ Here's a rough list of what works and doesn't work. I make no promises that this
 - Rewrite the core stuff in rust or zig.
   - I'll keep the JS version for the web, but a native version would be awfully convenient for a bunch of use cases, like native iOS apps
 - Allow peers to have a filtered view of the world, and only sync data with a small set of types
-
+- Ephemeral / overlay documents

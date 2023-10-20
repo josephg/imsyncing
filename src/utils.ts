@@ -93,3 +93,7 @@ export const emit = <F extends (...args: any[]) => void>(ee: SimpleEventEmitter<
     listener(...args)
   }
 }
+
+export function assert(expr: boolean, msg?: string) {
+  if (!expr) throw Error(msg != null ? `Assertion failed: ${msg}` : 'Assertion failed')
+}

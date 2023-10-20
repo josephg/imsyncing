@@ -1,3 +1,5 @@
+// Nodejs only.
+
 import repl from 'node:repl'
 import * as dbLib from './db.js'
 import * as causalGraph from './causal-graph.js'

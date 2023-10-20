@@ -5,7 +5,6 @@ import { CRDTValue, CRDTMapValue, MapKey, CreateValue, DbEntry, LV, MVRegister, 
 import * as causalGraph from './causal-graph.js'
 import { assertSortedCustom, errExpr } from "./utils.js"
 import { addIndex, entriesBetween, removeIndex } from "./last-modified-index.js"
-import { Console } from "node:console"
 
 export const createDbEntry = (appType: string, storesHistory: boolean = false): DbEntry => {
   if (storesHistory) throw Error('Storing history is NYI.')
