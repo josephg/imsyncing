@@ -1,7 +1,8 @@
 import { Schema, mergeSchemas, metaSchema, readRaw, writeLocalSchema, writeRawInto } from 'schemaboi'
 
 export interface GenericSocket {
-  write(msg: Uint8Array): void,
+  framingBytes?: number,
+  write(msg: Uint8Array, msgLen: number): void,
   data: AsyncIterableIterator<Uint8Array>,
   whenFinished: Promise<void>,
   readable: boolean,
@@ -20,7 +21,44 @@ const concatBuffers = (a: Uint8Array, b: Uint8Array): Uint8Array => {
 // export type MsgHandler<Msg = any> = (msg: Msg, sock: Socket) => void
 export type MsgHandler<Msg = any> = (msg: Msg) => void
 
-export function handle<Msg>(sock: GenericSocket, localSchema: Schema, onMsg: MsgHandler<Msg>) {
+export async function *framing(stream: AsyncIterableIterator<Uint8Array>) {
+  let buffer = new Uint8Array(0) // New, empty array.
+
+  for await (const newData of stream) {
+    // If the socket is closed, the iterator should stop.
+
+    // This is a bit inefficient, but eh.
+    buffer = concatBuffers(buffer, newData)
+
+    while (true) {
+      // Try to read the next message from buffer.
+
+      if (buffer.byteLength < 4) break
+      const msgLength = (new DataView(buffer.buffer, buffer.byteOffset)).getUint32(0, false)
+      // const msgLength = buffer.readUInt32BE(0)
+      let offset = 4 // We've read the message length.
+
+      if (buffer.byteLength < offset + msgLength) break // Need more bytes then we'll try again.
+      const rawMsg = buffer.subarray(offset, offset + msgLength)
+
+      yield rawMsg
+
+      offset += msgLength
+
+      // This just does a shallow copy, but since concat will reallocate the buffer, that should be ok.
+      // Its still not the greatest in terms of copies, but eh.
+      buffer = buffer.subarray(offset)
+    }
+  }
+}
+
+/**
+ * This function encodes & decodes the binary messages in the socket via schemaboi.
+ *
+ * TODO: The complexity here probably isn't warranted. It might better to just
+ * return a generator (async function*) of all the messages.
+ */
+export function handleSBProtocol<Msg>(sock: GenericSocket, localSchema: Schema, onMsg: MsgHandler<Msg>) {
   let closed = false
 
   // This method handles a protocol that works as follows:
@@ -34,58 +72,29 @@ export function handle<Msg>(sock: GenericSocket, localSchema: Schema, onMsg: Msg
 
   if (sock.readable) {
     ;(async () => {
-      let buffer = new Uint8Array(0) // New, empty array.
-
-      for await (const newData of sock.data) {
-        // If the socket is closed, the iterator should stop.
-
-        // This is a bit inefficient, but eh.
-        buffer = concatBuffers(buffer, newData)
-
-        while (true) {
-          // Try to read the next message from buffer.
-          // if (!bufContainsVarint(buffer)) break
-
-          // let offset = 0
-          // const msgLength = decode(buffer)
-          // offset += bytesUsed(buffer)
-
-          if (buffer.byteLength < 4) break
-          const msgLength = (new DataView(buffer.buffer, buffer.byteOffset)).getUint32(0, false)
-          // const msgLength = buffer.readUInt32BE(0)
-          let offset = 4 // We've read the message length.
-
-          if (buffer.byteLength < offset + msgLength) break // Need more bytes then we'll try again.
-          const rawMsg = buffer.subarray(offset, offset + msgLength)
-
-          if (mergedSchema == null) {
-            // Read the schema out.
-            const remoteSchema: Schema = readRaw(metaSchema, rawMsg)
-            mergedSchema = mergeSchemas(remoteSchema, localSchema)
-            console.log('merged schemas')
-          } else {
-            const msg = readRaw(mergedSchema, rawMsg)
-            onMsg(msg)
-          }
-
-          // To allow the onMsg handler to close the reader.
-          if (closed) return
-          offset += msgLength
-
-          // This just does a shallow copy, but since concat will reallocate the buffer, that should be ok.
-          // Its still not the greatest in terms of copies, but eh.
-          buffer = buffer.subarray(offset)
+      for await (const rawMsg of await sock.data) {
+        if (mergedSchema == null) {
+          // Read the schema out.
+          const remoteSchema: Schema = readRaw(metaSchema, rawMsg)
+          mergedSchema = mergeSchemas(remoteSchema, localSchema)
+          // console.log('merged schemas')
+        } else {
+          const msg = readRaw(mergedSchema, rawMsg)
+          onMsg(msg)
         }
+
+        // To allow the onMsg handler to close the reader.
+        if (closed) return
       }
     })()
   }
 
   const writeMsg = (schema: Schema, msg: any) => {
     if (sock.writable) {
-      const msgRaw = writeRawInto(schema, msg, new Uint8Array(32), 4)
-      let msgLen = msgRaw.byteLength - 4 // Length not including message header.
-      ;(new DataView(msgRaw.buffer, msgRaw.byteOffset)).setUint32(0, msgLen, false) // set length
-      sock.write(msgRaw)
+      const framingBytes = sock.framingBytes ?? 0
+      const msgRaw = writeRawInto(schema, msg, new Uint8Array(32), framingBytes)
+      let msgLen = msgRaw.byteLength - framingBytes // Length not including message header.
+      sock.write(msgRaw, msgLen)
     }
   }
 

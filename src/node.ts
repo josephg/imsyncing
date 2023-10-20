@@ -2,7 +2,7 @@
 
 import { LV, DocName, RuntimeContext } from "./types.js"
 import { resolvable } from "./utils.js"
-import { GenericSocket } from "./message-stream.js"
+import { GenericSocket, framing } from "./message-stream.js"
 import startRepl from './repl.js'
 import { autoReconnect, runProtocol } from "./protocol.js"
 import { WebSocketServer } from 'ws'
@@ -28,11 +28,20 @@ const console = new Console({
 Error.stackTraceLimit = Infinity
 
 const wrapNodeSocket = (sock: Socket): GenericSocket => {
+  if (!sock.readable) throw Error('Cannot wrap unreadable socket')
+
   return {
-    write(msg) {
-      if (sock.writable) sock.write(msg)
+    // For raw node sockets, we prepend a 4 byte packet length at the start
+    // of each message. This is stripped off by the framing() method.
+    framingBytes: 4,
+    write(msg, msgLen) {
+      if (sock.writable) {
+        ;(new DataView(msg.buffer, msg.byteOffset)).setUint32(0, msgLen, false)
+        sock.write(msg)
+      }
     },
-    data: sock[Symbol.asyncIterator](),
+    data: framing(sock[Symbol.asyncIterator]()),
+
     whenFinished: stream.promises.finished(sock),
     readable: sock.readable,
     writable: sock.writable,

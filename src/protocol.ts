@@ -7,7 +7,7 @@ import { assert, wait } from "./utils.js"
 import * as causalGraph from "./causal-graph.js"
 import * as database from './db.js'
 import { localNetSchema } from "./schema.js"
-import { GenericSocket, handle } from "./message-stream.js"
+import { GenericSocket, handleSBProtocol } from "./message-stream.js"
 import { DbEntryDiff, serializePartialSince } from "./db-entry.js"
 import { emitDocsChanged } from "./runtimectx.js"
 
@@ -125,7 +125,7 @@ export const runProtocol = (sock: GenericSocket, ctx: RuntimeContext): Promise<v
   }
 
 
-  const {close, write} = handle<NetMsg>(sock, localNetSchema, (msg) => {
+  const {close, write} = handleSBProtocol<NetMsg>(sock, localNetSchema, (msg) => {
     console.log('got net msg', msg)
 
     switch (msg.type) {

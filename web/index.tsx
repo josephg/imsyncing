@@ -64,8 +64,15 @@ ctx.listeners.add((from, changed) => {
     ws.binaryType = 'arraybuffer'
 
     // These get overwritten in the onopen handler below.
-    ws.onclose = () => { sock.reject(Error('websocket closed before it opened')) }
-    ws.onerror = (err) => { sock.reject(err) }
+    ws.onclose = (xxx) => {
+      console.warn(xxx)
+      sock.reject(Error('websocket closed before it opened'))
+      ws.close()
+    }
+    ws.onerror = (err) => {
+      sock.reject(err)
+      ws.close()
+    }
 
     ws.onopen = () => {
       console.log('ws open!')
