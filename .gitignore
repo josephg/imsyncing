@@ -3,3 +3,5 @@ node_modules
 *.scb
 .history
 yarn.lock
+esbuild-meta.json
+public/bundle*

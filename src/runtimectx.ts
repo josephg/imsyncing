@@ -1,9 +1,10 @@
 // Helper functions for the runtime context.
 
 import { DbEntryDiff, serializePartialSince } from "./db-entry.js"
-import { DocName, LV, RuntimeContext } from "./types.js"
+import { Db, DocName, LV, RuntimeContext } from "./types.js"
 import { emit } from "./utils.js"
 import * as causalGraph from './causal-graph.js'
+import { createDb } from "./db.js"
 
 // export function emitChangeEvent(ctx: RuntimeContext, from: 'local' | 'remote', changed: Set<[docName: DocName, oldHeads: LV[]]>) {
 export function emitDocsChanged(ctx: RuntimeContext, from: 'local' | 'remote', changed: Set<DocName>) {
@@ -29,4 +30,18 @@ export function emit1DocChanged(ctx: RuntimeContext, from: 'local' | 'remote', d
 
   // emitChangeEvent(ctx, from, new Set([[doc, oldHead]]))
   emitDocsChanged(ctx, from, new Set([doc]))
+}
+
+export function createCtx(db: Db = createDb()): RuntimeContext {
+  const globalKnownVersions = new Map<DocName, LV[]>()
+  for (const [name, entry] of db.entries) {
+    // Initialized with the current version of all entries.
+    globalKnownVersions.set(name, entry.cg.heads.slice())
+  }
+
+  return {
+    db,
+    globalKnownVersions,
+    listeners: new Set(),
+  }
 }
