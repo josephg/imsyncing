@@ -4,10 +4,10 @@ import * as causalGraph from "./causal-graph.js"
 import { DbEntryDiff, createDbEntry, mergePartialDiff, recursivelySetMap, recursivelySetRoot } from "./db-entry.js";
 import { emit1DocChanged } from "./runtimectx.js";
 
-export const createDb = (): Db => ({
+export const createDb = (agent: string = createRandomId()): Db => ({
   // inbox: ss.create(),
   entries: new Map(),
-  agent: createRandomId(),
+  agent,
   syncConfig: 'all',
 })
 

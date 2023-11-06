@@ -876,14 +876,7 @@ export function fromSerialized(data: SerializedCausalGraphV1): CausalGraph {
 }
 
 
-// type PartialSerializedCGEntryV1 = [
-//   agent: string,
-//   seq: number,
-//   len: number,
-
-//   parents: RawVersion[]
-// ]
-type PartialSerializedCGEntryV2 = {
+type PartialSerializedCGEntry = {
   agent: string,
   seq: number,
   len: number,
@@ -891,14 +884,14 @@ type PartialSerializedCGEntryV2 = {
   parents: RawVersion[]
 }
 
-export type PartialSerializedCGV2 = PartialSerializedCGEntryV2[]
+export type PartialSerializedCG = PartialSerializedCGEntry[]
 
 /**
  * The entries returned from this function are in the order of versions
  * specified in ranges.
  */
-export function serializeDiff(cg: CausalGraph, ranges: LVRange[]): PartialSerializedCGV2 {
-  const entries: PartialSerializedCGEntryV2[] = []
+export function serializeDiff(cg: CausalGraph, ranges: LVRange[]): PartialSerializedCG {
+  const entries: PartialSerializedCGEntry[] = []
   for (let [start, end] of ranges) {
     while (start != end) {
       const [e, offset] = findEntryContaining(cg, start)
@@ -924,12 +917,12 @@ export function serializeDiff(cg: CausalGraph, ranges: LVRange[]): PartialSerial
 }
 
 //! The entries returned from this function are always in causal order.
-export function serializeFromVersion(cg: CausalGraph, v: LV[]): PartialSerializedCGV2 {
+export function serializeFromVersion(cg: CausalGraph, v: LV[]): PartialSerializedCG {
   const ranges = diff(cg, v, cg.heads).bOnly
   return serializeDiff(cg, ranges)
 }
 
-export function mergePartialVersions(cg: CausalGraph, data: PartialSerializedCGV2): LVRange {
+export function mergePartialVersions(cg: CausalGraph, data: PartialSerializedCG): LVRange {
   const start = nextLV(cg)
 
   for (const {agent, seq, len, parents} of data) {
@@ -938,7 +931,7 @@ export function mergePartialVersions(cg: CausalGraph, data: PartialSerializedCGV
   return [start, nextLV(cg)]
 }
 
-export function *mergePartialVersions2(cg: CausalGraph, data: PartialSerializedCGV2) {
+export function *mergePartialVersions2(cg: CausalGraph, data: PartialSerializedCG) {
   // const start = nextLV(cg)
 
   for (const {agent, seq, len, parents} of data) {
@@ -949,7 +942,7 @@ export function *mergePartialVersions2(cg: CausalGraph, data: PartialSerializedC
   // return [start, nextLV(cg)]
 }
 
-export function advanceVersionFromSerialized(cg: CausalGraph, data: PartialSerializedCGV2, version: LV[]): LV[] {
+export function advanceVersionFromSerialized(cg: CausalGraph, data: PartialSerializedCG, version: LV[]): LV[] {
   for (const {agent, seq, len, parents} of data) {
     const parentLVs = rawToLVList(cg, parents)
     const vLast = rawToLV(cg, agent, seq + len - 1)
@@ -966,12 +959,12 @@ export function advanceVersionFromSerialized(cg: CausalGraph, data: PartialSeria
  * in each entry. Then we can use binary search to find the entry containing a specific
  * offset and convert it to a native LV.
  */
-export type EnhancedPartialSerializedCG = (PartialSerializedCGEntryV2 & {offset: number})[]
+export type EnhancedPartialSerializedCG = (PartialSerializedCGEntry & {offset: number})[]
 
-export function enhanceCGDiff(diff: PartialSerializedCGV2): EnhancedPartialSerializedCG {
+export function enhanceCGDiff(diff: PartialSerializedCG): EnhancedPartialSerializedCG {
   let offset = 0
   for (const e of diff) {
-    let ee: PartialSerializedCGEntryV2 & {offset?: number} = e
+    let ee: PartialSerializedCGEntry & {offset?: number} = e
     ee.offset = offset
     offset += ee.len
   }

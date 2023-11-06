@@ -16,14 +16,16 @@ import {createIterableStream} from 'ministreamiterator'
 import { resolvable } from '../src/utils.js';
 import { For, createSignal } from 'solid-js';
 import { toJS } from '../src/db-entry.js';
+import { getAgentFromIDB, storeAgent } from './agents.js';
 
 // import './index.css';
 // import App from './App';
 
+const [aa, setAgent] = createSignal<string>('waiting')
 const [docList, setDocList] = createSignal<{key: string, data: any}[]>([])
 function App() {
   return (<>
-      <h1 class={styles.App}>Hiii</h1>
+      <h1 class={styles.App}>Hiii {aa()}</h1>
       <ul>
         <For each={docList()}>{(doc, i) =>
           <li>
@@ -39,20 +41,27 @@ function App() {
 // const root = document.getElementById('body');
 render(() => <App />, document.body);
 
+;(async () => {
+  const agent = await getAgentFromIDB()
+  setAgent(agent)
 
-const ctx = createCtx()
+  window.onbeforeunload = () => {
+    storeAgent(agent)
+    // return null
+  }
 
-ctx.listeners.add((from, changed) => {
-  console.log(from, changed)
-  // return [...db.entries.entries()].map(([k, e]) => ([k, toJS(e)]))
+  const ctx = createCtx(createDb(agent))
 
-  setDocList(
-    [...ctx.db.entries.entries()]
-      .map(([k, e]) => ({key: k, data: toJS(e)}))
-  )
-})
+  ctx.listeners.add((from, changed) => {
+    console.log(from, changed)
+    // return [...db.entries.entries()].map(([k, e]) => ([k, toJS(e)]))
 
-{
+    setDocList(
+      [...ctx.db.entries.entries()]
+        .map(([k, e]) => ({key: k, data: toJS(e)}))
+    )
+  })
+
   const loc = window.location
   const wsUrl = (loc.protocol === 'https:' ? 'wss://' : 'ws://')
     + loc.host + '/'
@@ -64,14 +73,17 @@ ctx.listeners.add((from, changed) => {
     ws.binaryType = 'arraybuffer'
 
     // These get overwritten in the onopen handler below.
-    ws.onclose = (xxx) => {
-      console.warn(xxx)
-      sock.reject(Error('websocket closed before it opened'))
-      ws.close()
+    ws.onclose = (evt) => {
+      console.log('onclose called', evt, evt.code, evt.reason)
+      // console.warn(evt)
+      sock.reject(Error(evt.reason ?? 'websocket closed before it opened'))
     }
     ws.onerror = (err) => {
-      sock.reject(err)
-      ws.close()
+      // This will happen before an onclose() event, so I'm not worried.
+      console.warn('onerror called', err)
+      // console.warn('err', err)
+      // sock.reject(Error())
+      // ws.close()
     }
 
     ws.onopen = () => {
@@ -109,9 +121,7 @@ ctx.listeners.add((from, changed) => {
     return sock.promise
   })
 
-
-}
-
+})()
 // autoReconnect(ctx, () => {
 
 // })

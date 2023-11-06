@@ -79,7 +79,7 @@ export function localInsert<T>(crdt: StateSet<T>, version: RawVersion, value: T)
 
 // *** Remote state ***
 export type SSDelta<T=Primitive> = {
-  cg: causalGraph.PartialSerializedCGV2,
+  cg: causalGraph.PartialSerializedCG,
 
   /**
    * This is a list of modified keys, in LV order.

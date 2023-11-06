@@ -483,7 +483,7 @@ export interface DbEntryDiff {
   // required field.
   appType: string,
 
-  cg: causalGraph.PartialSerializedCGV2,
+  cg: causalGraph.PartialSerializedCG,
   // crdts: {agent: string, seq: number, info: PSerializedCRDTInfo}[]
 
   // In LV order. Using raw versions because many of these CRDT names
