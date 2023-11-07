@@ -611,10 +611,6 @@ export function mergePartialDiff(entry: DbEntry, delta: DbEntryDiff): LVRange {
   const offsets = causalGraph.mergePartialVersions3(entry.cg, delta.cg)
   // const cgDeltaEnh = enhanceCGDiff(delta.cg)
 
-  const offsetToLV = (offset: number): LV => (
-    causalGraph.pubToLV2(entry.cg, causalGraph.diffOffsetToPubVersion(offset, delta.cg, offsets))
-  )
-
   for (const {v: crdtPubV, diff} of delta.crdtDiffs) {
     const crdtLv = crdtPubToLV2(entry.cg, crdtPubV)
 
@@ -625,7 +621,7 @@ export function mergePartialDiff(entry: DbEntry, delta: DbEntryDiff): LVRange {
       case 'register': {
         if (crdt.type !== 'register') throw Error('Invalid CRDT type')
         const newValues = diff.value.map(({offset, val}): Pair<CreateValue> => {
-          const lv = offsetToLV(offset)
+          const lv = causalGraph.diffOffsetToLV(offset, delta.cg, offsets, entry.cg)
           // const lv = diffOffsetToMaybeLV(entry.cg, start, cgDeltaEnh, offset)
           return [lv, val]
         }).filter(([lv]) => lv >= 0) // Filter out updates we know about.
@@ -638,7 +634,7 @@ export function mergePartialDiff(entry: DbEntry, delta: DbEntryDiff): LVRange {
         for (const [key, regDiff] of diff.registers) {
           // TODO: Naughty copy+pasta! Bad! Fix!
           const newValues = regDiff.map(({offset, val}): Pair<CreateValue> => {
-            const lv = offsetToLV(offset)
+            const lv = causalGraph.diffOffsetToLV(offset, delta.cg, offsets, entry.cg)
             return [lv, val]
           }).filter(([lv]) => lv >= 0) // Filter out updates we know about.
 
