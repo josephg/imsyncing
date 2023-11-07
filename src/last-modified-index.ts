@@ -4,7 +4,7 @@
 // The current implementation is pretty inefficient since it involves splicing out items from an
 // array. It would be better to use a tree or something.
 
-import bs from 'binary-search'
+import {binarySearch as bs} from "causal-graph"
 import { LV } from "./types.js"
 import { assertSorted, assertSortedCustom } from './utils.js'
 

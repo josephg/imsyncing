@@ -1,6 +1,6 @@
 import { LV, LVRange, Primitive, PubVersion, Pair } from "./types.js"
 import * as causalGraph from 'causal-graph'
-import bs from 'binary-search'
+import {binarySearch as bs} from "causal-graph"
 import assert from 'assert/strict'
 import { assertSorted } from "./utils.js"
 import { LMIndex, addIndex, checkIndex, entriesBetween, lookupIndex, removeIndex } from "./last-modified-index.js"
