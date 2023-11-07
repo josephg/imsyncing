@@ -1,16 +1,11 @@
 import type * as causalGraph from "causal-graph"
+import type {LV, PubVersion} from "causal-graph"
 import type { DbEntryDiff } from "./db-entry.js"
 import type { LMIndex } from "./last-modified-index.js"
 
-export type PubVersion = [agent: string, seq: number]
+export type { LV, LVRange, PubVersion } from "causal-graph"
 
 export const ROOT: PubVersion = ['ROOT', 0]
-
-/** Local version */
-export type LV = number
-
-/** Local version range. Range is [start, end). */
-export type LVRange = [start: number, end: number]
 
 export const ROOT_LV: LV = -1
 
