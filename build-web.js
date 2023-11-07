@@ -11,6 +11,7 @@ import fs from 'fs'
     sourcemap: true,
     outfile: 'public/bundle.js',
     metafile: true,
+    tsconfig: 'web/tsconfig.json',
     plugins: [solidPlugin({
       solid: {
         generate: 'dom',

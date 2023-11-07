@@ -2,9 +2,9 @@ import type * as causalGraph from "causal-graph"
 import type { DbEntryDiff } from "./db-entry.js"
 import type { LMIndex } from "./last-modified-index.js"
 
-export type RawVersion = [agent: string, seq: number]
+export type PubVersion = [agent: string, seq: number]
 
-export const ROOT: RawVersion = ['ROOT', 0]
+export const ROOT: PubVersion = ['ROOT', 0]
 
 /** Local version */
 export type LV = number
@@ -69,7 +69,7 @@ export type Action =
 { type: 'map', key: MapKey, val: CreateValue }
 | { type: 'registerSet', val: CreateValue }
 | { type: 'setInsert', val: CreateValue }
-| { type: 'setDelete', target: RawVersion }
+| { type: 'setDelete', target: PubVersion }
 // export type Action =
 // { type: 'map', key: CRDTMapKey, localParents: RawVersion[], val: CreateValue }
 // | { type: 'registerSet', localParents: RawVersion[], val: CreateValue }
@@ -78,11 +78,11 @@ export type Action =
 
 export interface Op {
   /** Agent / seq of this operation */
-  id: RawVersion,
+  id: PubVersion,
   /** Parents of this op in the DbEntry's causal graph */
-  parents: RawVersion[],
+  parents: PubVersion[],
   /** CRDT that is modified by this operation */
-  crdtId: RawVersion,
+  crdtId: PubVersion,
   /** What the action does. Action kind must match the crdtId's kind. */
   action: Action,
 }
@@ -224,7 +224,7 @@ export interface InboxFields {
   // has been concurrently edited.
   //
   // Also we might not have the version named by heads.
-  heads: RawVersion[],
+  heads: PubVersion[],
 }
 
 export type DbChangeListener = (

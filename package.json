@@ -6,7 +6,7 @@
   "license": "MIT",
   "scripts": {
     "start": "node dist/src/node.js -l 9888",
-    "test": "npx tsc && node dist/test/schema-tests.js",
+    "test": "npx tsc -b src && node dist/test/schema-tests.js",
     "prepare": "rm -rf dist && tsc -p ."
   },
   "devDependencies": {

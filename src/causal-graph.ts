@@ -4,7 +4,7 @@
 import PriorityQueue from 'priorityqueuejs'
 import bs from 'binary-search'
 // import {AtLeast1, LV, LVRange, Primitive, RawVersion, ROOT, ROOT_LV, VersionSummary} from './types.js'
-import {LV, LVRange, Pair, RawVersion, ROOT, ROOT_LV, VersionSummary} from './types.js'
+import {LV, LVRange, Pair, PubVersion, ROOT, ROOT_LV, VersionSummary} from './types.js'
 import { pushRLEList, tryRangeAppend, tryRevRangeAppend } from './rle.js'
 import {max2, min2} from './utils.js'
 
@@ -136,7 +136,7 @@ export const hasVersion = (cg: CausalGraph, agent: string, seq: number): boolean
 // }
 
 /** Returns the first new version in the inserted set */
-export const addRaw = (cg: CausalGraph, id: RawVersion, len: number = 1, rawParents?: RawVersion[]): CGEntry | null => {
+export const addRaw = (cg: CausalGraph, id: PubVersion, len: number = 1, rawParents?: PubVersion[]): CGEntry | null => {
   const parents = rawParents != null
     ? rawToLVList(cg, rawParents)
     : cg.heads
@@ -185,7 +185,7 @@ export const add = (cg: CausalGraph, agent: string, seqStart: number, seqEnd: nu
   return entry
 }
 
-const versionCmp = ([a1, s1]: RawVersion, [a2, s2]: RawVersion) => (
+const versionCmp = ([a1, s1]: PubVersion, [a2, s2]: PubVersion) => (
   a1 < a2 ? 1
     : a1 > a2 ? -1
     : s1 - s2
@@ -254,13 +254,13 @@ export const lvToRawWithParents = (cg: CausalGraph, v: LV): [string, number, LV[
   return [e.agent, e.seq + offset, parents]
 }
 
-export const lvToRaw = (cg: CausalGraph, v: LV): RawVersion => {
+export const lvToRaw = (cg: CausalGraph, v: LV): PubVersion => {
   if (v === ROOT_LV) return ROOT
   const [e, offset] = findEntryContaining(cg, v)
   return [e.agent, e.seq + offset]
   // causalGraph.entries[localIndex]
 }
-export const lvToRawList = (cg: CausalGraph, parents: LV[] = cg.heads): RawVersion[] => (
+export const lvToRawList = (cg: CausalGraph, parents: LV[] = cg.heads): PubVersion[] => (
   parents.map(v => lvToRaw(cg, v))
 )
 
@@ -282,11 +282,11 @@ export const rawToLV = (cg: CausalGraph, agent: string, seq: number): LV => {
   if (clientEntry == null) throw Error(`Unknown ID: (${agent}, ${seq})`)
   return clientEntry.version
 }
-export const rawToLV2 = (cg: CausalGraph, v: RawVersion): LV => (
+export const rawToLV2 = (cg: CausalGraph, v: PubVersion): LV => (
   rawToLV(cg, v[0], v[1])
 )
 
-export const rawToLVList = (cg: CausalGraph, parents: RawVersion[]): LV[] => (
+export const rawToLVList = (cg: CausalGraph, parents: PubVersion[]): LV[] => (
   parents.map(([agent, seq]) => rawToLV(cg, agent, seq))
 )
 
@@ -881,7 +881,7 @@ type PartialSerializedCGEntry = {
   seq: number,
   len: number,
 
-  parents: RawVersion[]
+  parents: PubVersion[]
 }
 
 export type PartialSerializedCG = PartialSerializedCGEntry[]
@@ -898,7 +898,7 @@ export function serializeDiff(cg: CausalGraph, ranges: LVRange[]): PartialSerial
 
       const localEnd = min2(end, e.vEnd)
       const len = localEnd - start
-      const parents: RawVersion[] = offset === 0
+      const parents: PubVersion[] = offset === 0
         ? lvToRawList(cg, e.parents)
         : [[e.agent, e.seq + offset - 1]]
 

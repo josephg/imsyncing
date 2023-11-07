@@ -1,4 +1,4 @@
-import { LV, LVRange, Primitive, RawVersion, Pair } from "./types.js"
+import { LV, LVRange, Primitive, PubVersion, Pair } from "./types.js"
 import * as causalGraph from 'causal-graph'
 import bs from 'binary-search'
 import assert from 'assert/strict'
@@ -53,7 +53,7 @@ export function hydrate<T>(values: StateSet<T>['values'], cg: causalGraph.Causal
 }
 
 /** Set the key to a new value. The caller should create a new version for the operation, and pass that in. */
-export function localSet<T>(crdt: StateSet<T>, version: RawVersion, key: LV | -1, value: T): LV {
+export function localSet<T>(crdt: StateSet<T>, version: PubVersion, key: LV | -1, value: T): LV {
   const lv = causalGraph.addPubVersion(crdt.cg, version)!.version
   if (key == -1) key = lv
 
@@ -73,7 +73,7 @@ export function localSet<T>(crdt: StateSet<T>, version: RawVersion, key: LV | -1
 }
 
 /** Returns key of new item */
-export function localInsert<T>(crdt: StateSet<T>, version: RawVersion, value: T): LV {
+export function localInsert<T>(crdt: StateSet<T>, version: PubVersion, value: T): LV {
   return localSet(crdt, version, -1, value)
 }
 
@@ -89,7 +89,7 @@ export type SSDelta<T=Primitive> = {
   ops: {
     vOffset: LV,
     /** Key modified. RawVersion because it might be outside the range. */
-    key: RawVersion,
+    key: PubVersion,
     /** New value. TODO: Deleting! */
     val: T
   }[]

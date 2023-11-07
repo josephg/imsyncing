@@ -1,10 +1,11 @@
 // This file contains methods & tools to interact with database entries.
 // This code was stolen & modified from the DbEntry code in replca's JS implementation.
 
-import { CRDTValue, CRDTMapValue, MapKey, CreateValue, DbEntry, LV, MVRegister, Op, Pair, Primitive, ROOT_LV, RawVersion, RegisterValue, LVRange } from "./types.js"
+import { CRDTValue, CRDTMapValue, MapKey, CreateValue, DbEntry, LV, MVRegister, Op, Pair, Primitive, ROOT_LV, PubVersion, RegisterValue, LVRange } from "./types.js"
 import * as causalGraph from 'causal-graph'
 import { assertSortedCustom, errExpr } from "./utils.js"
 import { addIndex, entriesBetween, removeIndex } from "./last-modified-index.js"
+import binarySearch from "binary-search"
 
 export const createDbEntry = (appType: string, storesHistory: boolean = false): DbEntry => {
   if (storesHistory) throw Error('Storing history is NYI.')
@@ -47,7 +48,7 @@ export function hydrateIndex(entry: DbEntry) {
   entry.index.sort((a, b) => a.lv - b.lv)
 }
 
-const nextVersion = (entry: DbEntry, agent: string): RawVersion => ([agent, entry.nextSeq++])
+const nextVersion = (entry: DbEntry, agent: string): PubVersion => ([agent, entry.nextSeq++])
 
 function removeRecursive(entry: DbEntry, [lv, val]: Pair<RegisterValue>) {
   if (val.type !== 'crdt') return
@@ -281,7 +282,7 @@ export function applyRemoteOp(entry: DbEntry, op: Op): LV {
   }
 
   const newVersion = cgEntry.version
-  const crdtLV = causalGraph.pubToLV2(entry.cg, op.crdtId)
+  const crdtLV = crdtPubToLV2(entry.cg, op.crdtId)
 
   const crdt = entry.crdts.get(crdtLV)
   if (crdt == null) {
@@ -344,7 +345,7 @@ export function applyRemoteOp(entry: DbEntry, op: Op): LV {
 export function localMapInsert(entry: DbEntry, agent: string, mapId: LV, key: MapKey, val: CreateValue): [Op, LV] {
   // const crdt = getMap(entry, mapId)
 
-  const crdtId = causalGraph.lvToPub(entry.cg, mapId)
+  const crdtId = crdtLVToPub(entry.cg, mapId)
 
   // const localParentsLV = (crdt.registers.get(key) ?? []).map(([version]) => version)
   // const localParents = causalGraph.lvToPubList(entry.cg, localParentsLV)
@@ -488,7 +489,7 @@ export interface DbEntryDiff {
 
   // In LV order. Using raw versions because many of these CRDT names
   // will predate the cg diff.
-  crdtDiffs: {v: RawVersion, diff: CRDTDiff}[]
+  crdtDiffs: {v: PubVersion, diff: CRDTDiff}[]
 }
 
 const serializePRegisterValue = (entry: DbEntry, [lv, val]: Pair<RegisterValue>): CreateValue => {
@@ -516,6 +517,19 @@ const getOrDef = <K, V>(map: Map<K, V>, key: K, orDefault: () => V): V => {
   }
   return v
 }
+
+export const ROOT: PubVersion = ['ROOT', 0]
+
+const crdtLVToPub = (cg: causalGraph.CausalGraph, k: LV): PubVersion => (
+  k === ROOT_LV ? ROOT : causalGraph.lvToPub(cg, k)
+)
+
+const crdtPubToLV = (cg: causalGraph.CausalGraph, agent: string, seq: number): LV => (
+  agent === 'ROOT' ? ROOT_LV : causalGraph.pubToLV(cg, agent, seq)
+)
+const crdtPubToLV2 = (cg: causalGraph.CausalGraph, [agent, seq]: PubVersion): LV => (
+  crdtPubToLV(cg, agent, seq)
+)
 
 export function serializePartialSince(entry: DbEntry, v: LV[]): DbEntryDiff {
   if (entry.storesHistory) throw Error('Serializing with history NYI')
@@ -586,19 +600,58 @@ export function serializePartialSince(entry: DbEntry, v: LV[]): DbEntryDiff {
     cg: causalGraph.serializeFromVersion(entry.cg, v),
     // Gross. Should be correct though.
     crdtDiffs: crdtDiffEntries.map(([lv, diff]) => ({
-      v: causalGraph.lvToPub(entry.cg, lv),
+      v: crdtLVToPub(entry.cg, lv),
       diff
     })),
   }
 }
 
+
+/** I'm sending a lot of CG delta offsets instead of RawVersions because they're smaller
+ * (though using schemaboi the difference is probably pretty minimal). This code lets us
+ * convert from offsets back to LVs. First the CG diff is "enhanced" to contain offsets
+ * in each entry. Then we can use binary search to find the entry containing a specific
+ * offset and convert it to a native LV.
+ */
+export type EnhancedPartialSerializedCG = (causalGraph.PartialSerializedCGEntry & {offset: number})[]
+
+export function enhanceCGDiff(diff: causalGraph.PartialSerializedCG): EnhancedPartialSerializedCG {
+  let offset = 0
+  for (const e of diff) {
+    let ee: causalGraph.PartialSerializedCGEntry & {offset?: number} = e
+    ee.offset = offset
+    offset += ee.len
+  }
+  return diff as EnhancedPartialSerializedCG
+}
+
+export function diffOffsetToLV(cg: causalGraph.CausalGraph, diff: EnhancedPartialSerializedCG, offset: number): LV {
+  let idx = binarySearch(diff, offset, (entry, needle) => (
+    needle < entry.offset ? 1
+    : needle >= (entry.offset + entry.len) ? -1
+    : 0
+  ))
+  if (idx < 0) idx = -idx - 1 // Start at the next entry.
+  if (idx >= diff.length) throw Error('Invalid offset - past end of diff')
+
+  const e = diff[idx]
+  if (offset < e.offset || offset >= (e.offset + e.len)) throw Error('Invalid state - offset not found in entry')
+
+  return causalGraph.pubToLV(cg, e.agent, e.seq + (offset - e.offset))
+}
+
+export function diffOffsetToMaybeLV(cg: causalGraph.CausalGraph, oldNextLV: LV, diff: EnhancedPartialSerializedCG, offset: number): LV {
+  const lv = diffOffsetToLV(cg, diff, offset)
+  return lv < oldNextLV ? -1 : lv
+}
+
 export function mergePartialDiff(entry: DbEntry, delta: DbEntryDiff): LVRange {
   const range = causalGraph.mergePartialVersions(entry.cg, delta.cg)
   const start = range[0]
-  const cgDeltaEnh = causalGraph.enhanceCGDiff(delta.cg)
+  const cgDeltaEnh = enhanceCGDiff(delta.cg)
 
   for (const {v: rv, diff} of delta.crdtDiffs) {
-    const crdtLv = causalGraph.pubToLV2(entry.cg, rv)
+    const crdtLv = crdtPubToLV2(entry.cg, rv)
 
     const crdt = entry.crdts.get(crdtLv)
     if (crdt == null) throw Error('Diff modifies missing CRDT')
@@ -607,7 +660,7 @@ export function mergePartialDiff(entry: DbEntry, delta: DbEntryDiff): LVRange {
       case 'register': {
         if (crdt.type !== 'register') throw Error('Invalid CRDT type')
         const newValues = diff.value.map(({offset, val}): Pair<CreateValue> => {
-          const lv = causalGraph.diffOffsetToMaybeLV(entry.cg, start, cgDeltaEnh, offset)
+          const lv = diffOffsetToMaybeLV(entry.cg, start, cgDeltaEnh, offset)
           return [lv, val]
         }).filter(([lv]) => lv >= 0) // Filter out updates we know about.
 
@@ -619,7 +672,7 @@ export function mergePartialDiff(entry: DbEntry, delta: DbEntryDiff): LVRange {
         for (const [key, regDiff] of diff.registers) {
           // TODO: Naughty copy+pasta! Bad! Fix!
           const newValues = regDiff.map(({offset, val}): Pair<CreateValue> => {
-            const lv = causalGraph.diffOffsetToMaybeLV(entry.cg, start, cgDeltaEnh, offset)
+            const lv = diffOffsetToMaybeLV(entry.cg, start, cgDeltaEnh, offset)
             return [lv, val]
           }).filter(([lv]) => lv >= 0) // Filter out updates we know about.
 

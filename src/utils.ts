@@ -1,9 +1,9 @@
-import { RawVersion, SimpleEventEmitter } from "./types.js"
+import { PubVersion, SimpleEventEmitter } from "./types.js"
 
 export const min2 = (a: number, b: number) => a < b ? a : b
 export const max2 = (a: number, b: number) => a > b ? a : b
 
-export type AgentVersion = RawVersion
+export type AgentVersion = PubVersion
 export const createRandomId = (): string => Math.random().toString(36).slice(2)
 // export function createAgent(): AgentVersion {
 //   const agent = Math.random().toString(36).slice(2)

@@ -1,5 +1,5 @@
 import * as sb from 'schemaboi'
-import { Pair, DbEntry, LV, NetMsg, Primitive, RawVersion, RegisterValue } from "./types.js"
+import { Pair, DbEntry, LV, NetMsg, Primitive, PubVersion, RegisterValue } from "./types.js"
 import * as cg from 'causal-graph'
 import { hydrateIndex } from './db-entry.js'
 
@@ -119,10 +119,10 @@ export const appDbSchema: sb.AppSchema = {
     RawVersion: {
       // exhaustive: true,
       fields: { id: sb.Id, seq: LV },
-      encode(v: RawVersion) {
+      encode(v: PubVersion) {
         return { id: v[0], seq: v[1] }
       },
-      decode(vv: any): RawVersion { // {id: string, seq: number}
+      decode(vv: any): PubVersion { // {id: string, seq: number}
         return [vv.id, vv.seq]
       },
     },
