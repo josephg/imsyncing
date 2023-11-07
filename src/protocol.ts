@@ -233,7 +233,7 @@ export const runProtocol = (sock: GenericSocket, ctx: RuntimeContext): Promise<v
             // Defaulting to oldHead here because the new version might not dominate
             // the current version we have locally.
             let overlayHeads = state.versionOverlay.get(k) ?? ctx.globalKnownVersions.get(k) ?? []
-            overlayHeads = causalGraph.advanceVersionFromSerialized3(entry.cg, delta.cg, overlayHeads)
+            overlayHeads = causalGraph.advanceVersionFromSerialized(entry.cg, delta.cg, overlayHeads)
             // Is this really needed?? TODO
             overlayHeads = causalGraph.findDominators(entry.cg, overlayHeads)
 

@@ -6,7 +6,7 @@ import fs from 'fs'
   const result = await build({
     entryPoints: ['web/index.tsx'],
     bundle: true,
-    // minify: true,
+    minify: true,
     logLevel: 'info',
     sourcemap: true,
     outfile: 'public/bundle.js',

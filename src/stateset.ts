@@ -79,7 +79,7 @@ export function localInsert<T>(crdt: StateSet<T>, version: PubVersion, value: T)
 
 // *** Remote state ***
 export type SSDelta<T=Primitive> = {
-  cg: causalGraph.PartialSerializedV3,
+  cg: causalGraph.PartialSerializedV2,
 
   /**
    * This is a list of modified keys, in LV order.
@@ -123,7 +123,7 @@ export function deltaSince<T>(crdt: StateSet<T>, v: LV[] = []): SSDelta<T> {
   }
 
   return {
-    cg: causalGraph.serializeDiff3(crdt.cg, ranges),
+    cg: causalGraph.serializeDiff(crdt.cg, ranges),
     ops
   }
 }
@@ -182,7 +182,7 @@ export function mergeDelta<T>(crdt: StateSet<T>, delta: SSDelta<T>): LVRange {
   // }
 
   let offset = 0
-  for (const entry of causalGraph.mergePartialVersionsIter3(crdt.cg, delta.cg)) {
+  for (const entry of causalGraph.mergePartialVersionsIter(crdt.cg, delta.cg)) {
     let idx = bs(delta.ops, offset, (entry, needle) => entry.vOffset - needle)
     if (idx < 0) idx = -idx - 1 // Start at the next entry.
 

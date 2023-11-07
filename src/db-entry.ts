@@ -484,7 +484,7 @@ export interface DbEntryDiff {
   // required field.
   appType: string,
 
-  cg: causalGraph.PartialSerializedV3,
+  cg: causalGraph.PartialSerializedV2,
   // crdts: {agent: string, seq: number, info: PSerializedCRDTInfo}[]
 
   // In LV order. Using raw versions because many of these CRDT names
@@ -597,7 +597,7 @@ export function serializePartialSince(entry: DbEntry, v: LV[]): DbEntryDiff {
   assertSortedCustom(crdtDiffEntries, e => e[0])
   return {
     appType: entry.appType,
-    cg: causalGraph.serializeFromVersion3(entry.cg, v),
+    cg: causalGraph.serializeFromVersion(entry.cg, v),
     // Gross. Should be correct though.
     crdtDiffs: crdtDiffEntries.map(([lv, diff]) => ({
       v: crdtLVToPub(entry.cg, lv),
@@ -608,7 +608,7 @@ export function serializePartialSince(entry: DbEntry, v: LV[]): DbEntryDiff {
 
 export function mergePartialDiff(entry: DbEntry, delta: DbEntryDiff): LVRange {
   const start = causalGraph.nextLV(entry.cg)
-  const offsets = causalGraph.mergePartialVersions3(entry.cg, delta.cg)
+  const offsets = causalGraph.mergePartialVersions(entry.cg, delta.cg)
   // const cgDeltaEnh = enhanceCGDiff(delta.cg)
 
   for (const {v: crdtPubV, diff} of delta.crdtDiffs) {
@@ -621,7 +621,7 @@ export function mergePartialDiff(entry: DbEntry, delta: DbEntryDiff): LVRange {
       case 'register': {
         if (crdt.type !== 'register') throw Error('Invalid CRDT type')
         const newValues = diff.value.map(({offset, val}): Pair<CreateValue> => {
-          const lv = causalGraph.diffOffsetToLV(offset, delta.cg, offsets, entry.cg)
+          const lv = causalGraph.diffOffsetToLV2(offset, delta.cg, offsets, entry.cg)
           // const lv = diffOffsetToMaybeLV(entry.cg, start, cgDeltaEnh, offset)
           return [lv, val]
         }).filter(([lv]) => lv >= 0) // Filter out updates we know about.
@@ -634,7 +634,7 @@ export function mergePartialDiff(entry: DbEntry, delta: DbEntryDiff): LVRange {
         for (const [key, regDiff] of diff.registers) {
           // TODO: Naughty copy+pasta! Bad! Fix!
           const newValues = regDiff.map(({offset, val}): Pair<CreateValue> => {
-            const lv = causalGraph.diffOffsetToLV(offset, delta.cg, offsets, entry.cg)
+            const lv = causalGraph.diffOffsetToLV2(offset, delta.cg, offsets, entry.cg)
             return [lv, val]
           }).filter(([lv]) => lv >= 0) // Filter out updates we know about.
 

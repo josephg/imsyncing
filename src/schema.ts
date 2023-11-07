@@ -267,14 +267,7 @@ export const appNetSchema: sb.AppSchema = {
         len: sb.prim('u64'),
         agent: sb.Id,
         seq: LV, // seq for version.
-        parents: sb.list(sb.prim('s64')) // Negative for external references.
-      }
-    },
-
-    CGDiff: {
-      fields: {
-        extRef: sb.list('RawVersion'),
-        entries: sb.list(sb.ref('PartialCGEntry'))
+        parents: sb.list(sb.ref('RawVersion'))
       }
     },
 
@@ -319,7 +312,7 @@ export const appNetSchema: sb.AppSchema = {
     DbEntryDiff: {
       fields: {
         appType: sb.Id,
-        cg: sb.ref('CGDiff'),
+        cg: sb.list(sb.ref('PartialCGEntry')),
         // TODO: Could represent this as a map? Its sorted, but I don't want to
         // rely on the map sort order through SB.
         crdtDiffs: sb.list(sb.ref('CRDTDiffPair'))
