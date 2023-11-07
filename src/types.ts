@@ -1,4 +1,4 @@
-import type * as causalGraph from "./causal-graph.js"
+import type * as causalGraph from "causal-graph"
 import type { DbEntryDiff } from "./db-entry.js"
 import type { LMIndex } from "./last-modified-index.js"
 

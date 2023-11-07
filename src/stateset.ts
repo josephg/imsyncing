@@ -1,5 +1,5 @@
 import { LV, LVRange, Primitive, RawVersion, Pair } from "./types.js"
-import * as causalGraph from './causal-graph.js'
+import * as causalGraph from 'causal-graph'
 import bs from 'binary-search'
 import assert from 'assert/strict'
 import { assertSorted } from "./utils.js"
@@ -35,7 +35,7 @@ export function create<T=Primitive>(): StateSet<T> {
   return {
     values: new Map(),
     index: [],
-    cg: causalGraph.create(),
+    cg: causalGraph.createCG(),
   }
 }
 
@@ -54,7 +54,7 @@ export function hydrate<T>(values: StateSet<T>['values'], cg: causalGraph.Causal
 
 /** Set the key to a new value. The caller should create a new version for the operation, and pass that in. */
 export function localSet<T>(crdt: StateSet<T>, version: RawVersion, key: LV | -1, value: T): LV {
-  const lv = causalGraph.addRaw(crdt.cg, version)!.version
+  const lv = causalGraph.addPubVersion(crdt.cg, version)!.version
   if (key == -1) key = lv
 
   const oldPairs = crdt.values.get(key)
@@ -114,7 +114,7 @@ export function deltaSince<T>(crdt: StateSet<T>, v: LV[] = []): SSDelta<T> {
       const [lv, val] = pair
       ops.push({
         vOffset: lv - start + offset,
-        key: causalGraph.lvToRaw(crdt.cg, key),
+        key: causalGraph.lvToPub(crdt.cg, key),
         val,
       })
     }
@@ -129,7 +129,7 @@ export function deltaSince<T>(crdt: StateSet<T>, v: LV[] = []): SSDelta<T> {
 }
 
 function mergeSet<T>(crdt: StateSet<T>, key: LV, givenRawPairs: Pair<T>[]) {
-  // const lv = causalGraph.addRaw(crdt.cg, version, 1, parents)
+  // const lv = causalGraph.addPubVersion(crdt.cg, version, 1, parents)
 
   // Editing the old list in-place.
   const pairs: Pair<T>[] = crdt.values.get(key) ?? []
@@ -192,7 +192,7 @@ export function mergeDelta<T>(crdt: StateSet<T>, delta: SSDelta<T>): LVRange {
       const lv = vOffset - offset + entry.version
       if (lv >= entry.vEnd) break
 
-      const key = causalGraph.rawToLV2(crdt.cg, keyRaw)
+      const key = causalGraph.pubToLV2(crdt.cg, keyRaw)
 
       if (newPairs[key] == null) newPairs[key] = [[lv, val]]
       else newPairs[key].push([lv, val])

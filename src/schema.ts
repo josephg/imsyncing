@@ -1,6 +1,6 @@
 import * as sb from 'schemaboi'
 import { Pair, DbEntry, LV, NetMsg, Primitive, RawVersion, RegisterValue } from "./types.js"
-import * as cg from './causal-graph.js'
+import * as cg from 'causal-graph'
 import { hydrateIndex } from './db-entry.js'
 
 const LV = sb.prim('u64')

@@ -2,7 +2,7 @@
 
 import repl from 'node:repl'
 import * as dbLib from './db.js'
-import * as causalGraph from './causal-graph.js'
+import * as causalGraph from 'causal-graph'
 import { Db, DocName, LV, Primitive, RawVersion, RuntimeContext } from './types.js'
 import { toJS } from './db-entry.js'
 

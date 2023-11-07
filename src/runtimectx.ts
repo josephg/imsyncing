@@ -3,7 +3,7 @@
 import { DbEntryDiff, serializePartialSince } from "./db-entry.js"
 import { Db, DocName, LV, RuntimeContext } from "./types.js"
 import { emit } from "./utils.js"
-import * as causalGraph from './causal-graph.js'
+import * as causalGraph from 'causal-graph'
 import { createDb } from "./db.js"
 
 // export function emitChangeEvent(ctx: RuntimeContext, from: 'local' | 'remote', changed: Set<[docName: DocName, oldHeads: LV[]]>) {

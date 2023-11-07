@@ -4,7 +4,7 @@
 
 import { LV, NetMsg, VersionSummary, Db, DocName, RuntimeContext, DbEntry } from "./types.js"
 import { assert, wait } from "./utils.js"
-import * as causalGraph from "./causal-graph.js"
+import * as causalGraph from "causal-graph"
 import * as database from './db.js'
 import { localNetSchema } from "./schema.js"
 import { GenericSocket, handleSBProtocol } from "./message-stream.js"

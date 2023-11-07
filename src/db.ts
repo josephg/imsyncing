@@ -1,6 +1,6 @@
 import { createRandomId } from "./utils.js";
 import { Db, DocName, LV, LVRange, Primitive, ROOT_LV, RuntimeContext, VersionSummary } from "./types.js"
-import * as causalGraph from "./causal-graph.js"
+import * as causalGraph from "causal-graph"
 import { DbEntryDiff, createDbEntry, mergePartialDiff, recursivelySetMap, recursivelySetRoot } from "./db-entry.js";
 import { emit1DocChanged } from "./runtimectx.js";
 

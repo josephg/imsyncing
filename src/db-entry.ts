@@ -2,7 +2,7 @@
 // This code was stolen & modified from the DbEntry code in replca's JS implementation.
 
 import { CRDTValue, CRDTMapValue, MapKey, CreateValue, DbEntry, LV, MVRegister, Op, Pair, Primitive, ROOT_LV, RawVersion, RegisterValue, LVRange } from "./types.js"
-import * as causalGraph from './causal-graph.js'
+import * as causalGraph from 'causal-graph'
 import { assertSortedCustom, errExpr } from "./utils.js"
 import { addIndex, entriesBetween, removeIndex } from "./last-modified-index.js"
 
@@ -14,7 +14,7 @@ export const createDbEntry = (appType: string, storesHistory: boolean = false): 
       // CRDTs start with a root CRDT object entry.
       [ ROOT_LV, { type: 'map', registers: new Map() } ]
     ]),
-    cg: causalGraph.create(),
+    cg: causalGraph.createCG(),
     index: [],
     storesHistory,
     branch: [],
@@ -273,7 +273,7 @@ function mergeRegisters(entry: DbEntry, crdtId: LV, mapKey: MapKey | null, oldPa
 }
 
 export function applyRemoteOp(entry: DbEntry, op: Op): LV {
-  const cgEntry = causalGraph.addRaw(entry.cg, op.id, 1, op.parents)
+  const cgEntry = causalGraph.addPubVersion(entry.cg, op.id, 1, op.parents)
   if (cgEntry == null) {
     // The operation is already known.
     console.warn('Operation already applied', op.id)
@@ -281,7 +281,7 @@ export function applyRemoteOp(entry: DbEntry, op: Op): LV {
   }
 
   const newVersion = cgEntry.version
-  const crdtLV = causalGraph.rawToLV2(entry.cg, op.crdtId)
+  const crdtLV = causalGraph.pubToLV2(entry.cg, op.crdtId)
 
   const crdt = entry.crdts.get(crdtLV)
   if (crdt == null) {
@@ -344,14 +344,14 @@ export function applyRemoteOp(entry: DbEntry, op: Op): LV {
 export function localMapInsert(entry: DbEntry, agent: string, mapId: LV, key: MapKey, val: CreateValue): [Op, LV] {
   // const crdt = getMap(entry, mapId)
 
-  const crdtId = causalGraph.lvToRaw(entry.cg, mapId)
+  const crdtId = causalGraph.lvToPub(entry.cg, mapId)
 
   // const localParentsLV = (crdt.registers.get(key) ?? []).map(([version]) => version)
-  // const localParents = causalGraph.lvToRawList(entry.cg, localParentsLV)
+  // const localParents = causalGraph.lvToPubList(entry.cg, localParentsLV)
   const op: Op = {
     id: nextVersion(entry, agent),
     crdtId,
-    parents: causalGraph.lvToRawList(entry.cg, entry.cg.heads),
+    parents: causalGraph.lvListToPub(entry.cg),
     // action: { type: 'map', localParents, key, val }
     action: { type: 'map', key, val }
   }
@@ -496,7 +496,7 @@ const serializePRegisterValue = (entry: DbEntry, [lv, val]: Pair<RegisterValue>)
     // if (data.type === 'ref') throw Error('NYI')
 
     const crdtKind = entry.crdts.get(lv)!.type
-    // const rv = causalGraph.lvToRaw(entry.cg, data.id)
+    // const rv = causalGraph.lvToPub(entry.cg, data.id)
     return {type: 'crdt', crdtKind}
   } else {
     return val
@@ -504,7 +504,7 @@ const serializePRegisterValue = (entry: DbEntry, [lv, val]: Pair<RegisterValue>)
 }
 
 // const serializePMVRegisterValue = (v: LV, val: RegisterValue, cg: causalGraph.CausalGraph): PSerializedMVRegister[0] => {
-//   const rv = causalGraph.lvToRaw(cg, v)
+//   const rv = causalGraph.lvToPub(cg, v)
 //   return { agent: rv[0], seq: rv[1], val: serializePRegisterValue(val, cg) }
 // }
 
@@ -586,7 +586,7 @@ export function serializePartialSince(entry: DbEntry, v: LV[]): DbEntryDiff {
     cg: causalGraph.serializeFromVersion(entry.cg, v),
     // Gross. Should be correct though.
     crdtDiffs: crdtDiffEntries.map(([lv, diff]) => ({
-      v: causalGraph.lvToRaw(entry.cg, lv),
+      v: causalGraph.lvToPub(entry.cg, lv),
       diff
     })),
   }
@@ -598,7 +598,7 @@ export function mergePartialDiff(entry: DbEntry, delta: DbEntryDiff): LVRange {
   const cgDeltaEnh = causalGraph.enhanceCGDiff(delta.cg)
 
   for (const {v: rv, diff} of delta.crdtDiffs) {
-    const crdtLv = causalGraph.rawToLV2(entry.cg, rv)
+    const crdtLv = causalGraph.pubToLV2(entry.cg, rv)
 
     const crdt = entry.crdts.get(crdtLv)
     if (crdt == null) throw Error('Diff modifies missing CRDT')
@@ -672,7 +672,7 @@ export function mergePartialDiff(entry: DbEntry, delta: DbEntryDiff): LVRange {
 //       type: 'registerSet',
 //       val: {type: 'primitive', val: 'cool'},
 //     },
-//     crdtId: causalGraph.lvToRaw(entry.cg, k),
+//     crdtId: causalGraph.lvToPub(entry.cg, k),
 //     id: ['seph', 2],
 //     parents: [['seph', 1]],
 //   })
