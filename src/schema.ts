@@ -191,12 +191,9 @@ export const appDbSchema: sb.AppSchema = {
 
     CGEntry: {
       fields: {
-        version: LV,
-        vEnd: LV,
-
         agent: sb.Id,
         seq: LV, // seq for version.
-
+        len: sb.prim('u64'),
         parents: sb.list(LV) // parents for version.
       }
     },
@@ -226,16 +223,15 @@ export const appDbSchema: sb.AppSchema = {
 
     CausalGraph: {
       fields: {
-        heads: sb.list('u64'), // Could just recompute this on load?
         entries: sb.list('CGEntry'),
       },
 
-      encode(c: cg.CausalGraph): cg.SerializedCausalGraphV1 {
+      encode(c: cg.CausalGraph): { entries: cg.SerializedCausalGraphV2 } {
         // console.log('sss', cg.serialize(c))
-        return cg.serialize(c)
+        return { entries: cg.serialize(c) }
       },
       decode(data: any): cg.CausalGraph {
-        return cg.fromSerialized(data)
+        return cg.fromSerialized(data.entries)
       },
     },
   }
@@ -265,12 +261,20 @@ export const appNetSchema: sb.AppSchema = {
       decode(range) { return [range.start, range.end] },
     },
 
-    PartialSerializedCGEntry: {
+
+    PartialCGEntry: {
       fields: {
+        len: sb.prim('u64'),
         agent: sb.Id,
-        seq: LV,
-        len: LV,
-        parents: sb.list('RawVersion')
+        seq: LV, // seq for version.
+        parents: sb.list(sb.prim('s64')) // Negative for external references.
+      }
+    },
+
+    CGDiff: {
+      fields: {
+        extRef: sb.list('RawVersion'),
+        entries: sb.list(sb.ref('PartialCGEntry'))
       }
     },
 
@@ -315,7 +319,7 @@ export const appNetSchema: sb.AppSchema = {
     DbEntryDiff: {
       fields: {
         appType: sb.Id,
-        cg: sb.list('PartialSerializedCGEntry'),
+        cg: sb.ref('CGDiff'),
         // TODO: Could represent this as a map? Its sorted, but I don't want to
         // rely on the map sort order through SB.
         crdtDiffs: sb.list(sb.ref('CRDTDiffPair'))

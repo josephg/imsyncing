@@ -169,6 +169,7 @@ export const runProtocol = (sock: GenericSocket, ctx: RuntimeContext): Promise<v
           if (msg.versions.has(k)) continue
           // Entry doesn't appear in the remote's set at all. Add it to the deltas to send.
           deltasToSend.set(k, serializePartialSince(entry, []))
+          // console.log('delta', deltasToSend.get(k))
         }
 
         // We always send a deltas message, even if it has no changes so the other peer
@@ -232,7 +233,7 @@ export const runProtocol = (sock: GenericSocket, ctx: RuntimeContext): Promise<v
             // Defaulting to oldHead here because the new version might not dominate
             // the current version we have locally.
             let overlayHeads = state.versionOverlay.get(k) ?? ctx.globalKnownVersions.get(k) ?? []
-            overlayHeads = causalGraph.advanceVersionFromSerialized(entry.cg, delta.cg, overlayHeads)
+            overlayHeads = causalGraph.advanceVersionFromSerialized3(entry.cg, delta.cg, overlayHeads)
             // Is this really needed?? TODO
             overlayHeads = causalGraph.findDominators(entry.cg, overlayHeads)
 

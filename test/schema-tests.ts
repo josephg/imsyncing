@@ -1,8 +1,8 @@
 import { testSimpleRoundTrip } from "schemaboi/testhelpers.js"
-import * as cg from "../src/causal-graph.js"
-import * as database from "../src/db.js"
-import { appDbSchema, appNetSchema, localDbSchema } from '../src/schema.js'
-import { NetMsg, RuntimeContext } from "../src/types.js"
+import * as cg from "causal-graph"
+import * as database from "../dist/db.js"
+import { appDbSchema, appNetSchema, localDbSchema } from '../dist/schema.js'
+import { NetMsg, RuntimeContext } from "../dist/types.js"
 
 import {Console} from 'node:console'
 const console = new Console({
@@ -20,12 +20,12 @@ testSimpleRoundTrip(appDbSchema, 'Primitive', 123.456)
 testSimpleRoundTrip(appDbSchema, 'Primitive', { x: 'hi' })
 testSimpleRoundTrip(appDbSchema, 'Primitive', [1, 2, 'hi'])
 // testSimpleRoundTrip(appDbSchema, 'Op', { type: 'set', val: 123 })
-testSimpleRoundTrip(appDbSchema, 'CausalGraph', cg.create())
+testSimpleRoundTrip(appDbSchema, 'CausalGraph', cg.createCG())
 {
-  const cg1 = cg.create()
-  cg.addRaw(cg1, ['fred', 0], 10)
-  cg.addRaw(cg1, ['george', 0], 20)
-  cg.addRaw(cg1, ['george', 20], 5, [['fred', 9], ['george', 19]])
+  const cg1 = cg.createCG()
+  cg.addPubVersion(cg1, ['fred', 0], 10)
+  cg.addPubVersion(cg1, ['george', 0], 20)
+  cg.addPubVersion(cg1, ['george', 20], 5, [['fred', 9], ['george', 19]])
 
   testSimpleRoundTrip(appDbSchema, 'CausalGraph', cg1)
 }
